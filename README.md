@@ -9,11 +9,12 @@ gatidb is in early development. The in-memory B-Tree data structure is implement
 ### Benchmarks
 
 ```
-insert 1000 keys        time:   ~206 µs  (~206 ns per insert)
-search hit              time:   ~8.8 ns
-search miss             time:   ~11.4 ns
-delete 1000 keys        time:   ~226 µs  (~226 ns per delete)
+insert 1000 keys        time:   ~97 µs   (~97 ns per insert)
+search hit              time:   ~12 ns
+search miss             time:   ~13 ns
+delete 1000 keys        time:   ~146 µs  (~146 ns per delete)
 ```
+*B-Tree degree: 64 (127 keys per node), binary search within nodes*
 
 Run benchmarks yourself:
 ```bash
