@@ -136,9 +136,43 @@ impl BTreeNode {
                 self.values.remove(idx);
             } else {
                 // case 2 : key is in an internal node
+
+                if self.children[idx].keys.len() >= degree {
+                    // case 2a: left child has enough keys - use predecessor
+                    let (pred_key, pred_value) = self.children[idx].get_predecessor_key();
+                    self.keys[idx] = pred_key;
+                    self.values[idx] = pred_value;
+                    self.children[idx].delete_key(self.keys[idx], degree);
+                } else if self.children[idx + 1].keys.len() >= degree {
+                    // case 2b: right child has enough keys - use successor
+                    let (succ_key, succ_value) = self.children[idx + 1].get_successor_key();
+                    self.keys[idx] = succ_key;
+                    self.values[idx] = succ_value;
+                    self.children[idx + 1].delete_key(self.keys[idx], degree);
+                } else {
+                    // case 2c: both children have minimum keys - merge them
+                    self.merge(idx);
+                    self.children[idx].delete_key(key, degree);
+                }
             }
         } else {
             // case 3: key is not in this node, must be in a child
+            if self.is_leaf {
+                return; // key doesn't exist in tree
+            }
+
+            // check if child we need to descend into has minimum keys
+            if self.children[idx].keys.len() < degree {
+                self.fill(idx, degree);
+            }
+
+            // after fill, idx might have changed if we merged
+            // if we merged the last child, go to idx - 1
+            if idx >= self.children.len() {
+                self.children[idx - 1].delete_key(key, degree);
+            } else {
+                self.children[idx].delete_key(key, degree);
+            }
         }
     }
 
@@ -147,6 +181,104 @@ impl BTreeNode {
             .iter()
             .position(|k| *k >= key)
             .unwrap_or(self.keys.len())
+    }
+
+    fn get_predecessor_key(&self) -> (i32, String) {
+        let mut current = self;
+        while !current.is_leaf {
+            current = current.children.last().unwrap();
+        }
+
+        let last = current.keys.len() - 1;
+        (current.keys[last].clone(), current.values[last].clone())
+    }
+
+    fn get_successor_key(&self) -> (i32, String) {
+        let mut current = self;
+        while !current.is_leaf {
+            current = &current.children[0];
+        }
+        (current.keys[0].clone(), current.values[0].clone())
+    }
+
+    fn merge(&mut self, idx: usize) {
+        let key = self.keys.remove(idx);
+        let value = self.values.remove(idx);
+
+        let mut right = self.children.remove(idx + 1);
+        let left = &mut self.children[idx];
+
+        left.keys.push(key);
+        left.values.push(value);
+        left.keys.append(&mut right.keys);
+        left.values.append(&mut right.values);
+        left.children.append(&mut right.children);
+    }
+
+    fn fill(&mut self, idx: usize, degree: usize) {
+        if idx > 0 && self.children[idx - 1].keys.len() >= degree {
+            // case 3a: borrow from left sibling
+            self.borrow_from_prev(idx);
+        } else if idx < self.children.len() - 1 && self.children[idx + 1].keys.len() >= degree {
+            // case 3b: borrow from right sibling
+            self.borrow_from_next(idx);
+        } else {
+            // case 3c: merge with a sibling
+            if idx < self.children.len() - 1 {
+                self.merge(idx);
+            } else {
+                self.merge(idx - 1);
+            }
+        }
+    }
+
+    fn borrow_from_prev(&mut self, idx: usize) {
+        let prev_len = self.children[idx - 1].keys.len();
+
+        // take last key/value from left sibling
+        let sibling_key = self.children[idx - 1].keys.remove(prev_len - 1);
+        let sibling_value = self.children[idx - 1].values.remove(prev_len - 1);
+
+        // take last child from  left sibling (if  not leaf)
+        let sibling_child = if !self.children[idx - 1].is_leaf {
+            Some(self.children[idx - 1].children.remove(prev_len))
+        } else {
+            None
+        };
+
+        // pull parent key down to front of child
+        let parent_key = std::mem::replace(&mut self.keys[idx - 1], sibling_key);
+        let parent_value = std::mem::replace(&mut self.values[idx - 1], sibling_value);
+        self.children[idx].keys.insert(0, parent_key);
+        self.children[idx].values.insert(0, parent_value);
+
+        if let Some(child) = sibling_child {
+            self.children[idx].children.insert(0, child);
+        }
+    }
+
+    fn borrow_from_next(&mut self, idx: usize) {
+        // take first key/value from right sibling
+        let sibling_key = self.children[idx + 1].keys.remove(0);
+        let sibling_value = self.children[idx + 1].values.remove(0);
+
+        // take first child from right sibling (if not leaf)
+        let sibling_child = if !self.children[idx + 1].is_leaf {
+            Some(self.children[idx + 1].children.remove(0))
+        } else {
+            None
+        };
+
+        // pull parent key down to end of child
+        let parent_key = std::mem::replace(&mut self.keys[idx], sibling_key);
+        let parent_value = std::mem::replace(&mut self.values[idx], sibling_value);
+
+        self.children[idx].keys.push(parent_key);
+        self.children[idx].values.push(parent_value);
+
+        if let Some(child) = sibling_child {
+            self.children[idx].children.push(child);
+        }
     }
 }
 
@@ -242,6 +374,122 @@ mod tests {
             }
             for i in 0..50 {
                 assert_eq!(tree.search(i), Some(&format!("v{}", i)));
+            }
+        }
+    }
+
+    #[test]
+    fn test_delete_from_leaf() {
+        let mut tree = BTree::new(2);
+        tree.insert(1, String::from("one"));
+        tree.insert(2, String::from("two"));
+        tree.insert(3, String::from("three"));
+        tree.delete(2);
+        assert_eq!(tree.search(2), None);
+        assert_eq!(tree.search(1), Some(&String::from("one")));
+        assert_eq!(tree.search(3), Some(&String::from("three")));
+    }
+
+    #[test]
+    fn test_delete_nonexistent_key() {
+        let mut tree = BTree::new(2);
+        tree.insert(1, String::from("one"));
+        tree.delete(99); // should not panic
+        assert_eq!(tree.search(1), Some(&String::from("one")));
+    }
+
+    #[test]
+    fn test_delete_only_key() {
+        let mut tree = BTree::new(2);
+        tree.insert(5, String::from("five"));
+        tree.delete(5);
+        assert_eq!(tree.search(5), None);
+    }
+
+    #[test]
+    fn test_delete_from_internal_node() {
+        let mut tree = BTree::new(2);
+        for i in 0..10 {
+            tree.insert(i, format!("v{}", i));
+        }
+        // delete a key that's likely in an internal node
+        tree.delete(3);
+        assert_eq!(tree.search(3), None);
+        // verify other keys still exist
+        for i in 0..10 {
+            if i != 3 {
+                assert_eq!(tree.search(i), Some(&format!("v{}", i)));
+            }
+        }
+    }
+
+    #[test]
+    fn test_delete_all_keys() {
+        let mut tree = BTree::new(2);
+        for i in 0..10 {
+            tree.insert(i, format!("v{}", i));
+        }
+        for i in 0..10 {
+            tree.delete(i);
+        }
+        for i in 0..10 {
+            assert_eq!(tree.search(i), None);
+        }
+    }
+
+    #[test]
+    fn test_delete_reverse_order() {
+        let mut tree = BTree::new(2);
+        for i in 0..10 {
+            tree.insert(i, format!("v{}", i));
+        }
+        for i in (0..10).rev() {
+            tree.delete(i);
+            assert_eq!(tree.search(i), None);
+            // remaining keys should still be found
+            for j in 0..i {
+                assert_eq!(tree.search(j), Some(&format!("v{}", j)));
+            }
+        }
+    }
+
+    #[test]
+    fn test_delete_triggers_merge() {
+        let mut tree = BTree::new(2);
+        for i in 0..7 {
+            tree.insert(i, format!("v{}", i));
+        }
+        // delete enough keys to trigger merges
+        tree.delete(0);
+        tree.delete(1);
+        tree.delete(2);
+        for i in 3..7 {
+            assert_eq!(tree.search(i), Some(&format!("v{}", i)));
+        }
+    }
+
+    #[test]
+    fn test_delete_triggers_borrow() {
+        let mut tree = BTree::new(2);
+        for i in 0..10 {
+            tree.insert(i, format!("v{}", i));
+        }
+        tree.delete(0);
+        for i in 1..10 {
+            assert_eq!(tree.search(i), Some(&format!("v{}", i)));
+        }
+    }
+
+    #[test]
+    fn test_delete_many_keys_different_degrees() {
+        for degree in 2..=5 {
+            let mut tree = BTree::new(degree);
+            for i in 0..100 {
+                tree.insert(i, format!("v{}", i));
+            }
+            for i in 0..100 {
+                tree.delete(i);
+                assert_eq!(tree.search(i), None);
             }
         }
     }
