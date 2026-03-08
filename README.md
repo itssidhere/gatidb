@@ -4,7 +4,7 @@ A relational database management system written from scratch in Rust. Think MySQ
 
 ## Current Status
 
-gatidb is in early development. The in-memory B-Tree data structure is implemented with insert and search. This is the foundation that everything else will be built on top of.
+gatidb is in early development. The B-Tree storage engine is implemented with insert, search, and delete — both in-memory and disk-backed with page-based persistence through a buffer pool.
 
 ### Benchmarks
 
@@ -35,11 +35,11 @@ cargo bench
 ├─────────────────────────────────────────┤
 │         Transaction Manager             │  <- ACID, MVCC, WAL
 ├─────────────────────────────────────────┤
-│      B-Tree Storage Engine [wip]        │  <- in-memory B-Tree
+│      B-Tree Storage Engine              │  <- disk-backed B-Tree
 ├─────────────────────────────────────────┤
-│          Buffer Pool / Cache            │  <- page caching, LRU eviction
+│          Buffer Pool / Cache            │  <- page caching in memory
 ├─────────────────────────────────────────┤
-│         Disk Manager / Pager            │  <- page-based file I/O
+│         Disk Manager / Pager            │  <- page-based file I/O (4KB pages)
 └─────────────────────────────────────────┘
 ```
 
@@ -57,11 +57,13 @@ cargo bench
 - [ ] B+ Tree variant (data only in leaves, leaf-level linked list)
 
 ### Persistence
-- [ ] Page-based storage (4KB pages)
-- [ ] Disk-backed B-Tree (replace in-memory children with page offsets)
-- [ ] Buffer pool with LRU eviction
+- [x] Page-based storage (4KB pages)
+- [x] Disk Manager (read/write pages to file)
+- [x] Buffer Pool (in-memory page cache with dirty tracking)
+- [x] Disk-backed B-Tree (page IDs instead of memory pointers)
+- [x] Node serialization/deserialization to bytes
+- [ ] Buffer pool LRU eviction (fixed-size cache)
 - [ ] Write-Ahead Log (WAL) for crash recovery
-- [ ] Serialization/deserialization of nodes to bytes
 
 ### Transactions
 - [ ] ACID transactions
