@@ -2,10 +2,6 @@
 
 A relational database management system written from scratch in Rust. Think MySQL/PostgreSQL, but built from zero — no dependencies on existing database engines. The goal is a fully functional, ACID-compliant SQL database with its own storage engine, query planner, and wire protocol.
 
-## Why gatidb?
-
-"Gati" means speed. Most people use databases — we're building one. From the B-Tree all the way up to SQL parsing and a TCP server, every layer is written by hand.
-
 ## Current Status
 
 gatidb is in early development. The in-memory B-Tree data structure is implemented with insert and search. This is the foundation that everything else will be built on top of.
@@ -13,9 +9,10 @@ gatidb is in early development. The in-memory B-Tree data structure is implement
 ### Benchmarks
 
 ```
-insert 1000 keys        time:   ~203 µs  (~203 ns per insert)
-search hit              time:   ~8.7 ns
-search miss             time:   ~11.3 ns
+insert 1000 keys        time:   ~206 µs  (~206 ns per insert)
+search hit              time:   ~8.8 ns
+search miss             time:   ~11.4 ns
+delete 1000 keys        time:   ~226 µs  (~226 ns per delete)
 ```
 
 Run benchmarks yourself:
@@ -52,7 +49,7 @@ cargo bench
 - [x] B-Tree insert with node splitting
 - [x] B-Tree search (point lookup)
 - [x] Benchmarks with Criterion
-- [ ] B-Tree delete with rebalancing (merge/borrow)
+- [x] B-Tree delete with rebalancing (merge/borrow)
 - [ ] Support generic key/value types
 - [ ] Range queries and iterators
 - [ ] Bulk loading

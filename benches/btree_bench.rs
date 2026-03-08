@@ -31,5 +31,19 @@ fn bench_search(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_insert, bench_search);
+fn bench_delete(c: &mut Criterion) {
+    c.bench_function("delete 1000 keys", |b| {
+        b.iter(|| {
+            let mut tree = BTree::new(black_box(4));
+            for i in 0..1000 {
+                tree.insert(black_box(i), format!("value_{}", i));
+            }
+            for i in 0..1000 {
+                tree.delete(black_box(i));
+            }
+        });
+    });
+}
+
+criterion_group!(benches, bench_insert, bench_search, bench_delete);
 criterion_main!(benches);
