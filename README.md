@@ -1,100 +1,162 @@
 # gatidb
 
-A simple key-value database built from scratch in Rust, using a B-Tree as the storage engine.
+A relational database management system written from scratch in Rust. Think MySQL/PostgreSQL, but built from zero — no dependencies on existing database engines. The goal is a fully functional, ACID-compliant SQL database with its own storage engine, query planner, and wire protocol.
 
-## What is a B-Tree?
+## Why gatidb?
 
-A B-Tree is a self-balancing tree data structure used in databases and file systems. Unlike a binary tree (which has max 2 children per node), a B-Tree node can have **many keys and many children**.
+"Gati" means speed. Most people use databases — we're building one. From the B-Tree all the way up to SQL parsing and a TCP server, every layer is written by hand.
 
-### Why B-Trees for databases?
+## Current Status
 
-- They keep data **sorted**, so range queries are fast
-- They stay **balanced** — every leaf is at the same depth
-- They're optimized for systems that read/write large blocks of data (like disks)
+gatidb is in early development. The in-memory B-Tree data structure is implemented with insert and search. This is the foundation that everything else will be built on top of.
 
-## How our B-Tree works
-
-### The structs
+### Benchmarks
 
 ```
-BTree
-├── root: BTreeNode
-└── degree: usize        (controls how many keys fit in a node)
-
-BTreeNode
-├── keys: Vec<i32>       (sorted list of keys)
-├── values: Vec<String>  (value for each key)
-├── children: Vec<BTreeNode>  (child nodes, empty if leaf)
-└── is_leaf: bool
+insert 1000 keys        time:   ~203 µs  (~203 ns per insert)
+search hit              time:   ~8.7 ns
+search miss             time:   ~11.3 ns
 ```
 
-With `degree = 2`, each node can hold **max 3 keys** (formula: `2 * degree - 1`).
+Run benchmarks yourself:
+```bash
+cargo bench
+```
 
-### Search
-
-1. Start at the root node
-2. Scan through the node's keys to find a match
-3. If found, return the value
-4. If not found and it's a leaf, return None
-5. If not found and it's an internal node, recurse into the correct child
-
-### Insert
-
-1. Find the right leaf node where the key should go
-2. If the node is full (has `2 * degree - 1` keys), **split** it:
-   - The node breaks into two halves
-   - The middle key gets pushed up to the parent
-3. If the root itself is full, a new root is created (this is how the tree grows taller)
-
-### Example: inserting keys 0 through 6 with degree=2
+## Architecture
 
 ```
-Insert 0,1,2: root = [0, 1, 2]  (root is now full, 3 keys)
+┌─────────────────────────────────────────┐
+│          TCP Server / Wire Protocol     │  <- client connections
+├─────────────────────────────────────────┤
+│            SQL Parser                   │  <- parsing SQL statements
+├─────────────────────────────────────────┤
+│           Query Engine                  │  <- query planning, execution
+├─────────────────────────────────────────┤
+│           Table / Schema                │  <- table definitions, rows, columns
+├─────────────────────────────────────────┤
+│         Transaction Manager             │  <- ACID, MVCC, WAL
+├─────────────────────────────────────────┤
+│      B-Tree Storage Engine [wip]        │  <- in-memory B-Tree
+├─────────────────────────────────────────┤
+│          Buffer Pool / Cache            │  <- page caching, LRU eviction
+├─────────────────────────────────────────┤
+│         Disk Manager / Pager            │  <- page-based file I/O
+└─────────────────────────────────────────┘
+```
 
-Insert 3: root is full, split!
-        [1]              <-- median pushed up as new root
-       /    \
-    [0]      [2, 3]      <-- split into two children
+## Roadmap
 
-Insert 4,5: fills up the right child
+### Storage Engine
+- [x] In-memory B-Tree data structure
+- [x] B-Tree insert with node splitting
+- [x] B-Tree search (point lookup)
+- [x] Benchmarks with Criterion
+- [ ] B-Tree delete with rebalancing (merge/borrow)
+- [ ] Support generic key/value types
+- [ ] Range queries and iterators
+- [ ] Bulk loading
+- [ ] B+ Tree variant (data only in leaves, leaf-level linked list)
+
+### Persistence
+- [ ] Page-based storage (4KB pages)
+- [ ] Disk-backed B-Tree (replace in-memory children with page offsets)
+- [ ] Buffer pool with LRU eviction
+- [ ] Write-Ahead Log (WAL) for crash recovery
+- [ ] Serialization/deserialization of nodes to bytes
+
+### Transactions
+- [ ] ACID transactions
+- [ ] MVCC (Multi-Version Concurrency Control)
+- [ ] Snapshot isolation
+- [ ] Deadlock detection
+
+### Concurrency
+- [ ] Reader-writer locks on B-Tree nodes
+- [ ] Lock-free reads with MVCC
+- [ ] Connection pooling
+
+### Table & Schema
+- [ ] Row format (fixed-length and variable-length columns)
+- [ ] Data types (INT, VARCHAR, BOOL, FLOAT, TIMESTAMP)
+- [ ] CREATE TABLE / DROP TABLE
+- [ ] Schema catalog (system tables)
+- [ ] ALTER TABLE
+
+### SQL Parser
+- [ ] Tokenizer / Lexer
+- [ ] Parser (recursive descent or PEG)
+- [ ] SELECT, INSERT, UPDATE, DELETE
+- [ ] WHERE clauses with AND/OR
+- [ ] JOINs (INNER, LEFT, RIGHT)
+- [ ] ORDER BY, GROUP BY, LIMIT
+- [ ] Aggregate functions (COUNT, SUM, AVG, MIN, MAX)
+- [ ] Subqueries
+
+### Query Engine
+- [ ] Query planner
+- [ ] Query optimizer (cost-based)
+- [ ] Sequential scan
+- [ ] Index scan
+- [ ] Nested loop join
+- [ ] Hash join
+- [ ] Sort-merge join
+- [ ] Prepared statements
+
+### Indexing
+- [ ] Primary key index (B-Tree)
+- [ ] Secondary indexes
+- [ ] Composite indexes
+- [ ] Index-only scans
+
+### Networking
+- [ ] TCP server
+- [ ] Wire protocol (MySQL or PostgreSQL compatible, or custom)
+- [ ] Client library
+- [ ] Connection handling and authentication
+- [ ] TLS support
+
+### Observability
+- [ ] Logging
+- [ ] Metrics and statistics
+- [ ] EXPLAIN query plans
+
+## How the B-Tree works
+
+A B-Tree is a self-balancing tree where each node holds multiple keys. With `degree = 2`, each node holds max 3 keys. Keys are always sorted within a node, and children hold keys in the ranges between parent keys.
+
+```
+        [10,    20,    30]
+       /     |      |     \
+  keys<10  10<k<20  20<k<30  keys>30
+```
+
+### Insert with splitting
+
+```
+Insert 0,1,2: root = [0, 1, 2]  (full)
+
+Insert 3: root splits
         [1]
        /    \
-    [0]      [2, 3, 4]   <-- right child is full now
+    [0]      [2, 3]
 
-Insert 5: right child full, split!
+Insert 4,5: right child fills
         [1, 3]
        /   |   \
     [0]   [2]   [4, 5]
-
-...and so on
 ```
 
-## Rust concepts used
-
-| Concept | Where we used it |
-|---------|-----------------|
-| `struct` | `BTreeNode`, `BTree` — grouping data together |
-| `Vec<T>` | Storing keys, values, children — growable arrays |
-| `impl` | Adding methods to our structs |
-| `&self` | Borrowing — reading data without taking ownership |
-| `&mut self` | Mutable borrow — modifying data |
-| `Option<T>` | `search` returns `Some(value)` or `None` |
-| `match` | Pattern matching on `Option` and with guards |
-| Closures | `\|k\| *k >= key` — anonymous functions for iterators |
-| `std::mem::replace` | Swapping out the root when splitting |
-| Modules | `mod btree` — organizing code into files |
-| `split_off` | Splitting a Vec into two halves |
-| Iterators | `.iter().position()` — scanning through elements |
-
-## Running
+## Building
 
 ```bash
-cargo run
+cargo build           # debug build
+cargo build --release # optimized build
+cargo test            # run tests
+cargo bench           # run benchmarks
+cargo run             # run the demo
 ```
 
-## What's next
+## License
 
-- [ ] Delete operation
-- [ ] Disk-backed storage (persist to file)
-- [ ] Support generic key/value types
-- [ ] Range queries
+MIT
