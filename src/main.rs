@@ -1,6 +1,7 @@
-mod btree;
+use gatidb::btree::BTree;
+
 fn main() {
-    let mut tree = btree::BTree::new(2);
+    let mut tree = BTree::new(2);
 
     for i in 0..20 {
         tree.insert(i, format!("value_{}", i));
