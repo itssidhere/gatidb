@@ -49,6 +49,16 @@ impl BTree {
             _ => None,
         }
     }
+
+    pub fn delete(&mut self, key: i32) {
+        self.root.delete_key(key, self.degree);
+
+        // if root has no keys but has children, make the first child the new root
+
+        if self.root.keys.is_empty() && !self.root.is_leaf {
+            self.root = self.root.children.remove(0);
+        }
+    }
 }
 
 impl BTreeNode {
@@ -112,6 +122,31 @@ impl BTreeNode {
 
             self.children[i].insert_non_full(key, value, degree);
         }
+    }
+
+    fn delete_key(&mut self, key: i32, degree: usize) {
+        let idx = self.find_key(key);
+
+        if idx < self.keys.len() && self.keys[idx] == key {
+            // key is in this node
+
+            if self.is_leaf {
+                // case 1 : key is in a leaf - just remove it
+                self.keys.remove(idx);
+                self.values.remove(idx);
+            } else {
+                // case 2 : key is in an internal node
+            }
+        } else {
+            // case 3: key is not in this node, must be in a child
+        }
+    }
+
+    fn find_key(&self, key: i32) -> usize {
+        self.keys
+            .iter()
+            .position(|k| *k >= key)
+            .unwrap_or(self.keys.len())
     }
 }
 
