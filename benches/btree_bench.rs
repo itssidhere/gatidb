@@ -4,7 +4,7 @@ use gatidb::btree::BTree;
 fn bench_insert(c: &mut Criterion) {
     c.bench_function("insert 1000 keys", |b| {
         b.iter(|| {
-            let mut tree = BTree::new(black_box(4));
+            let mut tree = BTree::new(black_box(64));
             for i in 0..1000 {
                 tree.insert(black_box(i), format!("value_{}", i));
             }
@@ -13,7 +13,7 @@ fn bench_insert(c: &mut Criterion) {
 }
 
 fn bench_search(c: &mut Criterion) {
-    let mut tree = BTree::new(4);
+    let mut tree = BTree::new(64);
     for i in 0..1000 {
         tree.insert(i, format!("value_{}", i));
     }
@@ -34,7 +34,7 @@ fn bench_search(c: &mut Criterion) {
 fn bench_delete(c: &mut Criterion) {
     c.bench_function("delete 1000 keys", |b| {
         b.iter(|| {
-            let mut tree = BTree::new(black_box(4));
+            let mut tree = BTree::new(black_box(64));
             for i in 0..1000 {
                 tree.insert(black_box(i), format!("value_{}", i));
             }
