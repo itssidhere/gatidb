@@ -100,3 +100,100 @@ impl BTreeNode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_tree_is_empty() {
+        let tree = BTree::new(2);
+        assert_eq!(tree.search(1), None);
+    }
+
+    #[test]
+    fn test_insert_and_search_single() {
+        let mut tree = BTree::new(2);
+        tree.insert(5, String::from("five"));
+        assert_eq!(tree.search(5), Some(&String::from("five")));
+    }
+
+    #[test]
+    fn test_search_miss() {
+        let mut tree = BTree::new(2);
+        tree.insert(5, String::from("five"));
+        assert_eq!(tree.search(99), None);
+    }
+
+    #[test]
+    fn test_insert_multiple_sorted() {
+        let mut tree = BTree::new(2);
+        tree.insert(1, String::from("one"));
+        tree.insert(2, String::from("two"));
+        tree.insert(3, String::from("three"));
+        assert_eq!(tree.search(1), Some(&String::from("one")));
+        assert_eq!(tree.search(2), Some(&String::from("two")));
+        assert_eq!(tree.search(3), Some(&String::from("three")));
+    }
+
+    #[test]
+    fn test_insert_reverse_order() {
+        let mut tree = BTree::new(2);
+        tree.insert(10, String::from("ten"));
+        tree.insert(5, String::from("five"));
+        tree.insert(1, String::from("one"));
+        assert_eq!(tree.search(1), Some(&String::from("one")));
+        assert_eq!(tree.search(5), Some(&String::from("five")));
+        assert_eq!(tree.search(10), Some(&String::from("ten")));
+    }
+
+    #[test]
+    fn test_insert_triggers_split() {
+        let mut tree = BTree::new(2); // max 3 keys per node
+        tree.insert(1, String::from("one"));
+        tree.insert(2, String::from("two"));
+        tree.insert(3, String::from("three"));
+        tree.insert(4, String::from("four")); // triggers root split
+        assert_eq!(tree.search(1), Some(&String::from("one")));
+        assert_eq!(tree.search(2), Some(&String::from("two")));
+        assert_eq!(tree.search(3), Some(&String::from("three")));
+        assert_eq!(tree.search(4), Some(&String::from("four")));
+    }
+
+    #[test]
+    fn test_insert_many_keys() {
+        let mut tree = BTree::new(3);
+        for i in 0..100 {
+            tree.insert(i, format!("value_{}", i));
+        }
+        for i in 0..100 {
+            assert_eq!(tree.search(i), Some(&format!("value_{}", i)));
+        }
+        assert_eq!(tree.search(100), None);
+    }
+
+    #[test]
+    fn test_insert_random_order() {
+        let mut tree = BTree::new(2);
+        let keys = vec![50, 20, 80, 10, 30, 70, 90, 5, 15, 25];
+        for k in &keys {
+            tree.insert(*k, format!("val_{}", k));
+        }
+        for k in &keys {
+            assert_eq!(tree.search(*k), Some(&format!("val_{}", k)));
+        }
+    }
+
+    #[test]
+    fn test_different_degrees() {
+        for degree in 2..=5 {
+            let mut tree = BTree::new(degree);
+            for i in 0..50 {
+                tree.insert(i, format!("v{}", i));
+            }
+            for i in 0..50 {
+                assert_eq!(tree.search(i), Some(&format!("v{}", i)));
+            }
+        }
+    }
+}
