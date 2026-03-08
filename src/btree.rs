@@ -40,12 +40,9 @@ impl BTree {
     }
 
     fn search_node(node: &BTreeNode, key: i32) -> Option<&String> {
-        let pos = node.keys.iter().position(|k| *k >= key);
-
-        match pos {
-            Some(i) if node.keys[i] == key => Some(&node.values[i]),
-            Some(i) if !node.is_leaf => Self::search_node(&node.children[i], key),
-            None if !node.is_leaf => Self::search_node(node.children.last().unwrap(), key),
+        match node.keys.binary_search(&key) {
+            Ok(i) => Some(&node.values[i]),
+            Err(i) if !node.is_leaf => Self::search_node(&node.children[i], key),
             _ => None,
         }
     }
@@ -97,19 +94,11 @@ impl BTreeNode {
     fn insert_non_full(&mut self, key: i32, value: String, degree: usize) {
         if self.is_leaf {
             // find position and insert directly
-            let pos = self
-                .keys
-                .iter()
-                .position(|k| *k >= key)
-                .unwrap_or(self.keys.len());
+            let pos = self.keys.binary_search(&key).unwrap_or_else(|i| i);
             self.keys.insert(pos, key);
             self.values.insert(pos, value);
         } else {
-            let mut i = self
-                .keys
-                .iter()
-                .position(|k| *k >= key)
-                .unwrap_or(self.keys.len());
+            let mut i = self.keys.binary_search(&key).unwrap_or_else(|i| i);
 
             // if that child is full split it first
             if self.children[i].keys.len() == 2 * degree - 1 {
@@ -177,10 +166,10 @@ impl BTreeNode {
     }
 
     fn find_key(&self, key: i32) -> usize {
-        self.keys
-            .iter()
-            .position(|k| *k >= key)
-            .unwrap_or(self.keys.len())
+        match self.keys.binary_search(&key) {
+            Ok(i) => i,
+            Err(i) => i,
+        }
     }
 
     fn get_predecessor_key(&self) -> (i32, String) {
