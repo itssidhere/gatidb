@@ -1,9 +1,11 @@
 use crate::disk::PAGE_SIZE;
 
+pub const VALUE_SIZE: usize = 256;
+
 pub fn serialize_node(
     is_leaf: bool,
     keys: &[i32],
-    values: &[String],
+    values: &[Vec<u8>],
     children: &[u32], // page ids, not btreenode pointers
 ) -> [u8; PAGE_SIZE] {
     let mut buf = [0u8; PAGE_SIZE];
@@ -24,12 +26,12 @@ pub fn serialize_node(
         offset += 4;
     }
 
-    // values ( 64 bytes each, zero-padded )
+    // values (VALUE_SIZE bytes each: 2-byte length prefix + data + zero padding)
     for val in values {
-        let bytes = val.as_bytes();
-        let len = bytes.len().min(64);
-        buf[offset..offset + len].copy_from_slice(&bytes[..len]);
-        offset += 64;
+        let len = val.len().min(VALUE_SIZE - 2);
+        buf[offset..offset + 2].copy_from_slice(&(len as u16).to_le_bytes());
+        buf[offset + 2..offset + 2 + len].copy_from_slice(&val[..len]);
+        offset += VALUE_SIZE;
     }
 
     for child_id in children {
@@ -40,7 +42,7 @@ pub fn serialize_node(
     buf
 }
 
-pub fn deserialize_node(buf: &[u8; PAGE_SIZE]) -> (bool, Vec<i32>, Vec<String>, Vec<u32>) {
+pub fn deserialize_node(buf: &[u8; PAGE_SIZE]) -> (bool, Vec<i32>, Vec<Vec<u8>>, Vec<u32>) {
     let mut offset = 0;
 
     let is_leaf = buf[offset] != 0;
@@ -62,17 +64,12 @@ pub fn deserialize_node(buf: &[u8; PAGE_SIZE]) -> (bool, Vec<i32>, Vec<String>, 
         offset += 4;
     }
 
-    let mut values = Vec::new();
+    let mut values: Vec<Vec<u8>> = Vec::new();
     for _ in 0..num_keys {
-        let end = buf[offset..offset + 64]
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(64);
-
-        let val = String::from_utf8_lossy(&buf[offset..offset + end]).to_string();
-
+        let len = u16::from_le_bytes([buf[offset], buf[offset + 1]]) as usize;
+        let val = buf[offset + 2..offset + 2 + len].to_vec();
         values.push(val);
-        offset += 64;
+        offset += VALUE_SIZE;
     }
 
     let num_children = if is_leaf { 0 } else { num_keys + 1 };
@@ -100,7 +97,7 @@ mod tests {
     #[test]
     fn test_serialize_deserialize_leaf() {
         let keys = vec![10, 20, 30];
-        let values = vec!["hello".to_string(), "world".to_string(), "foo".to_string()];
+        let values = vec![b"hello".to_vec(), b"world".to_vec(), b"foo".to_vec()];
         let children: Vec<u32> = vec![];
 
         let buf = serialize_node(true, &keys, &values, &children);
@@ -115,7 +112,7 @@ mod tests {
     #[test]
     fn test_serialize_deserialize_internal() {
         let keys = vec![10, 20];
-        let values = vec!["a".to_string(), "b".to_string()];
+        let values = vec![b"a".to_vec(), b"b".to_vec()];
         let children: Vec<u32> = vec![0, 1, 2];
 
         let buf = serialize_node(false, &keys, &values, &children);

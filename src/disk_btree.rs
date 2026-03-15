@@ -25,11 +25,11 @@ impl DiskBtree {
         tree
     }
 
-    pub fn search(&mut self, key: i32) -> Option<String> {
+    pub fn search(&mut self, key: i32) -> Option<Vec<u8>> {
         self.search_node(self.root_page_id, key)
     }
 
-    pub fn insert(&mut self, key: i32, value: String) {
+    pub fn insert(&mut self, key: i32, value: Vec<u8>) {
         let root_id = self.root_page_id;
         let page = self.pool.get_page(root_id);
         let (is_leaf, keys, values, children) = deserialize_node(page);
@@ -49,7 +49,7 @@ impl DiskBtree {
         }
     }
 
-    fn search_node(&mut self, page_id: u32, key: i32) -> Option<String> {
+    fn search_node(&mut self, page_id: u32, key: i32) -> Option<Vec<u8>> {
         let page = self.pool.get_page(page_id);
         let (is_leaf, keys, values, children) = deserialize_node(page);
 
@@ -60,7 +60,7 @@ impl DiskBtree {
         }
     }
 
-    fn insert_non_full(&mut self, page_id: u32, key: i32, value: String) {
+    fn insert_non_full(&mut self, page_id: u32, key: i32, value: Vec<u8>) {
         let page = self.pool.get_page(page_id);
         let (is_leaf, mut keys, mut values, mut children) = deserialize_node(page);
 
@@ -235,7 +235,7 @@ impl DiskBtree {
         }
     }
 
-    fn get_predecessor(&mut self, page_id: u32) -> (i32, String) {
+    fn get_predecessor(&mut self, page_id: u32) -> (i32, Vec<u8>) {
         let page = self.pool.get_page(page_id);
         let (is_leaf, keys, values, children) = deserialize_node(page);
 
@@ -248,7 +248,7 @@ impl DiskBtree {
         }
     }
 
-    fn get_successor(&mut self, page_id: u32) -> (i32, String) {
+    fn get_successor(&mut self, page_id: u32) -> (i32, Vec<u8>) {
         let page = self.pool.get_page(page_id);
         let (is_leaf, keys, values, children) = deserialize_node(page);
 
@@ -420,13 +420,13 @@ mod tests {
         let filename = "test_disk_btree.db";
         let mut tree = make_tree(filename, 2);
 
-        tree.insert(10, "ten".to_string());
-        tree.insert(20, "twenty".to_string());
-        tree.insert(5, "five".to_string());
+        tree.insert(10, b"ten".to_vec());
+        tree.insert(20, b"twenty".to_vec());
+        tree.insert(5, b"five".to_vec());
 
-        assert_eq!(tree.search(10), Some("ten".to_string()));
-        assert_eq!(tree.search(20), Some("twenty".to_string()));
-        assert_eq!(tree.search(5), Some("five".to_string()));
+        assert_eq!(tree.search(10), Some(b"ten".to_vec()));
+        assert_eq!(tree.search(20), Some(b"twenty".to_vec()));
+        assert_eq!(tree.search(5), Some(b"five".to_vec()));
         assert_eq!(tree.search(99), None);
 
         std::fs::remove_file(filename).unwrap();
@@ -439,11 +439,11 @@ mod tests {
 
         // degree 2 = max 3 keys per node, will trigger splits
         for i in 0..10 {
-            tree.insert(i, format!("val_{}", i));
+            tree.insert(i, format!("val_{}", i).into_bytes());
         }
 
         for i in 0..10 {
-            assert_eq!(tree.search(i), Some(format!("val_{}", i)));
+            assert_eq!(tree.search(i), Some(format!("val_{}", i).into_bytes()));
         }
         assert_eq!(tree.search(99), None);
 
@@ -457,9 +457,9 @@ mod tests {
         // insert and flush to disk
         {
             let mut tree = make_tree(filename, 2);
-            tree.insert(1, "one".to_string());
-            tree.insert(2, "two".to_string());
-            tree.insert(3, "three".to_string());
+            tree.insert(1, b"one".to_vec());
+            tree.insert(2, b"two".to_vec());
+            tree.insert(3, b"three".to_vec());
             tree.flush();
         }
 
@@ -483,13 +483,13 @@ mod tests {
     fn test_delete_from_leaf() {
         let filename = "test_disk_delete_leaf.db";
         let mut tree = make_tree(filename, 2);
-        tree.insert(1, "one".to_string());
-        tree.insert(2, "two".to_string());
-        tree.insert(3, "three".to_string());
+        tree.insert(1, b"one".to_vec());
+        tree.insert(2, b"two".to_vec());
+        tree.insert(3, b"three".to_vec());
         tree.delete(2);
         assert_eq!(tree.search(2), None);
-        assert_eq!(tree.search(1), Some("one".to_string()));
-        assert_eq!(tree.search(3), Some("three".to_string()));
+        assert_eq!(tree.search(1), Some(b"one".to_vec()));
+        assert_eq!(tree.search(3), Some(b"three".to_vec()));
         std::fs::remove_file(filename).unwrap();
     }
 
@@ -497,9 +497,9 @@ mod tests {
     fn test_delete_nonexistent() {
         let filename = "test_disk_delete_nonexist.db";
         let mut tree = make_tree(filename, 2);
-        tree.insert(1, "one".to_string());
+        tree.insert(1, b"one".to_vec());
         tree.delete(99);
-        assert_eq!(tree.search(1), Some("one".to_string()));
+        assert_eq!(tree.search(1), Some(b"one".to_vec()));
         std::fs::remove_file(filename).unwrap();
     }
 
@@ -508,7 +508,7 @@ mod tests {
         let filename = "test_disk_delete_all.db";
         let mut tree = make_tree(filename, 2);
         for i in 0..10 {
-            tree.insert(i, format!("v{}", i));
+            tree.insert(i, format!("v{}", i).into_bytes());
         }
         for i in 0..10 {
             tree.delete(i);
@@ -524,13 +524,13 @@ mod tests {
         let filename = "test_disk_delete_merge.db";
         let mut tree = make_tree(filename, 2);
         for i in 0..7 {
-            tree.insert(i, format!("v{}", i));
+            tree.insert(i, format!("v{}", i).into_bytes());
         }
         tree.delete(0);
         tree.delete(1);
         tree.delete(2);
         for i in 3..7 {
-            assert_eq!(tree.search(i), Some(format!("v{}", i)));
+            assert_eq!(tree.search(i), Some(format!("v{}", i).into_bytes()));
         }
         std::fs::remove_file(filename).unwrap();
     }
@@ -540,11 +540,11 @@ mod tests {
         let filename = "test_disk_delete_borrow.db";
         let mut tree = make_tree(filename, 2);
         for i in 0..10 {
-            tree.insert(i, format!("v{}", i));
+            tree.insert(i, format!("v{}", i).into_bytes());
         }
         tree.delete(0);
         for i in 1..10 {
-            assert_eq!(tree.search(i), Some(format!("v{}", i)));
+            assert_eq!(tree.search(i), Some(format!("v{}", i).into_bytes()));
         }
         std::fs::remove_file(filename).unwrap();
     }
@@ -555,7 +555,7 @@ mod tests {
             let filename = format!("test_disk_delete_deg{}.db", degree);
             let mut tree = make_tree(&filename, degree);
             for i in 0..100 {
-                tree.insert(i, format!("v{}", i));
+                tree.insert(i, format!("v{}", i).into_bytes());
             }
             for i in 0..100 {
                 tree.delete(i);
