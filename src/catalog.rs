@@ -122,6 +122,13 @@ impl Catalog {
         buf
     }
 
+    pub fn deserialize_node(buf: &[u8; PAGE_SIZE]) -> Vec<TableMeta> {
+        let mut offset = 0;
+        let mut tables = Vec::new();
+
+        tables
+    }
+
     pub fn flush(&mut self) {
         self.pool.borrow_mut().flush();
     }
