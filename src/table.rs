@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use crate::buffer::BufferPool;
 use crate::disk_btree::DiskBtree;
 
@@ -22,6 +25,7 @@ pub enum Value {
     Null,
 }
 
+#[derive(Clone)]
 pub struct Schema {
     pub columns: Vec<Column>,
     pub primary_key: usize,
@@ -156,7 +160,7 @@ mod tests {
 
         let filename = "test_table.db";
         let dm = DiskManager::new(filename);
-        let pool = BufferPool::new(dm);
+        let pool = Rc::new(RefCell::new(BufferPool::new(dm)));
         let schema = users_schema();
         let mut table = Table::new("users", schema, pool, 2);
 
@@ -203,11 +207,19 @@ pub struct Table {
 }
 
 impl Table {
-    pub fn new(name: &str, schema: Schema, pool: BufferPool, degree: usize) -> Self {
+    pub fn new(name: &str, schema: Schema, pool: Rc<RefCell<BufferPool>>, degree: usize) -> Self {
         Table {
             name: name.to_string(),
             schema,
             tree: DiskBtree::new(pool, degree),
+        }
+    }
+
+    pub fn open(name: &str, schema: Schema, pool: Rc<RefCell<BufferPool>>, root_page_id: u32, next_page_id: u32, degree: usize) -> Self {
+        Table {
+            name: name.to_string(),
+            schema,
+            tree: DiskBtree::open(pool, root_page_id, next_page_id, degree),
         }
     }
 
