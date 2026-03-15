@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::buffer::BufferPool;
 use crate::disk::PAGE_SIZE;
 use crate::page::serialize_node;
-use crate::table::{self, DataType, Schema, Table, Value};
+use crate::table::{Column, DataType, Schema, Table};
 
 pub struct Catalog {
     pool: Rc<RefCell<BufferPool>>,
@@ -84,6 +84,7 @@ impl Catalog {
 
             buf[offset..offset + 4]
                 .copy_from_slice(&(table.schema.primary_key as u32).to_le_bytes());
+            offset += 4;
 
             let num_cols = table.schema.columns.len() as u16;
             buf[offset..offset + 2].copy_from_slice(&num_cols.to_le_bytes());
@@ -122,9 +123,95 @@ impl Catalog {
         buf
     }
 
-    pub fn deserialize_node(buf: &[u8; PAGE_SIZE]) -> Vec<TableMeta> {
+    pub fn deserialize_catalog(buf: &[u8; PAGE_SIZE]) -> Vec<TableMeta> {
         let mut offset = 0;
         let mut tables = Vec::new();
+
+        let num_tables = u16::from_le_bytes([buf[offset], buf[offset + 1]]) as usize;
+        offset += 2;
+
+        for _ in 0..num_tables {
+            let name_len = u16::from_le_bytes([buf[offset], buf[offset + 1]]) as usize;
+            offset += 2;
+
+            let name = String::from_utf8_lossy(&buf[offset..offset + name_len]).to_string();
+            offset += name_len;
+
+            let root_page_id = u32::from_le_bytes([
+                buf[offset],
+                buf[offset + 1],
+                buf[offset + 2],
+                buf[offset + 3],
+            ]);
+
+            offset += 4;
+
+            let degree = u32::from_le_bytes([
+                buf[offset],
+                buf[offset + 1],
+                buf[offset + 2],
+                buf[offset + 3],
+            ]) as usize;
+
+            offset += 4;
+
+            let pk = u32::from_le_bytes([
+                buf[offset],
+                buf[offset + 1],
+                buf[offset + 2],
+                buf[offset + 3],
+            ]) as usize;
+
+            offset += 4;
+
+            let num_cols = u16::from_le_bytes([buf[offset], buf[offset + 1]]);
+
+            offset += 2;
+
+            let mut columns: Vec<Column> = Vec::new();
+            for _ in 0..num_cols {
+                let column_len = u16::from_le_bytes([buf[offset], buf[offset + 1]]) as usize;
+                offset += 2;
+                let column_name =
+                    String::from_utf8_lossy(&buf[offset..offset + column_len]).to_string();
+
+                offset += column_len;
+
+                let tag = buf[offset];
+                offset += 1;
+
+                let max_len = u32::from_le_bytes([
+                    buf[offset],
+                    buf[offset + 1],
+                    buf[offset + 2],
+                    buf[offset + 3],
+                ]) as usize;
+                offset += 4;
+
+                let data_type = match tag {
+                    0 => DataType::Int,
+                    1 => DataType::Varchar(max_len),
+                    2 => DataType::Bool,
+                    _ => panic!("unknown data type tag"),
+                };
+
+                columns.push(Column {
+                    name: column_name,
+                    data_type,
+                });
+            }
+
+            let schema = Schema {
+                columns,
+                primary_key: pk,
+            };
+            tables.push(TableMeta {
+                name,
+                schema,
+                root_page_id,
+                degree,
+            });
+        }
 
         tables
     }
