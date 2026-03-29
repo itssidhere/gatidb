@@ -240,6 +240,10 @@ impl Table {
     pub fn delete_row(&mut self, pk: i32) {
         self.tree.delete(pk);
     }
+    pub fn next_page_id(&self) -> u32 {
+        self.tree.next_page_id()
+    }
+
     pub fn flush(&mut self) {
         self.tree.flush();
     }
