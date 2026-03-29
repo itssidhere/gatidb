@@ -24,7 +24,9 @@ impl DiskManager {
         self.file.seek(SeekFrom::Start(offset)).unwrap();
 
         let mut buffer = [0u8; PAGE_SIZE];
-        self.file.read_exact(&mut buffer).unwrap();
+        if self.file.read_exact(&mut buffer).is_err() {
+            return [0u8; PAGE_SIZE];
+        }
         buffer
     }
 

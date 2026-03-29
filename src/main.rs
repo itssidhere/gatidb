@@ -1,34 +1,53 @@
+use std::fs::remove_file;
+
 use gatidb::{
     btree::BTree,
     buffer::BufferPool,
-    catalog::Catalog,
+    catalog::{self, Catalog},
     disk::{self, DiskManager},
     table::{Column, DataType, Schema, Table, Value},
 };
 
 fn main() {
-    let dm = DiskManager::new("gatidb.db");
-    let pool = BufferPool::new(dm);
-    let mut catalog = Catalog::new(pool);
+    {
+        let dm = DiskManager::new("gatidb.db");
+        let pool = BufferPool::new(dm);
+        let mut catalog = Catalog::new(pool);
 
-    let schema = Schema {
-        columns: vec![
-            Column {
-                name: "id".to_string(),
-                data_type: DataType::Int,
+        catalog.create_table(
+            "jobs",
+            Schema {
+                columns: vec![
+                    Column {
+                        name: "id".to_string(),
+                        data_type: DataType::Int,
+                    },
+                    Column {
+                        name: "title".to_string(),
+                        data_type: DataType::Varchar(64),
+                    },
+                ],
+                primary_key: 0,
             },
-            Column {
-                name: "comment".to_string(),
-                data_type: DataType::Varchar(128),
-            },
-        ],
-        primary_key: 0,
-    };
+            3,
+        );
 
-    catalog.create_table("jobs", schema, 64);
+        let mut table = catalog.get_table("jobs").unwrap();
+        table.insert_row(&[Value::Int(1), Value::Varchar("fix bug".to_string())]);
+        catalog.update_next_page_id(table.next_page_id());
+        catalog.flush();
+        println!("Written!");
+    }
 
-    let mut jobs = catalog.get_table("jobs").unwrap();
-    jobs.insert_row(&[Value::Int(1), Value::Varchar("fix bug".to_string())]);
+    {
+        let dm = DiskManager::new("gatidb.db");
+        let pool = BufferPool::new(dm);
+        let catalog = Catalog::new(pool);
 
-    println!("{:?}", jobs.get_row(1))
+        let mut table = catalog.get_table("jobs").unwrap();
+        let row = table.get_row(1);
+        println!("Read back: {:?}", row);
+    }
+
+    std::fs::remove_file("gatidb.db").unwrap();
 }
