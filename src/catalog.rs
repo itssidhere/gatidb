@@ -250,3 +250,104 @@ impl Catalog {
         self.pool.borrow_mut().flush();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::disk::DiskManager;
+    use crate::table::Value;
+
+    #[test]
+    fn test_catalog_persistence() {
+        let filename = "test_catalog_persist.db";
+
+        {
+            let dm = DiskManager::new(filename);
+            let pool = BufferPool::new(dm);
+            let mut catalog = Catalog::new(pool);
+
+            catalog.create_table("jobs", Schema {
+                columns: vec![
+                    Column { name: "id".to_string(), data_type: DataType::Int },
+                    Column { name: "title".to_string(), data_type: DataType::Varchar(64) },
+                ],
+                primary_key: 0,
+            }, 3);
+
+            let mut table = catalog.get_table("jobs").unwrap();
+            table.insert_row(&[Value::Int(1), Value::Varchar("fix bug".to_string())]);
+            table.insert_row(&[Value::Int(2), Value::Varchar("add tests".to_string())]);
+            catalog.update_next_page_id(table.next_page_id());
+            catalog.flush();
+        }
+
+        {
+            let dm = DiskManager::new(filename);
+            let pool = BufferPool::new(dm);
+            let mut catalog = Catalog::new(pool);
+
+            let mut table = catalog.get_table("jobs").unwrap();
+
+            let row1 = table.get_row(1).unwrap();
+            match &row1[0] { Value::Int(n) => assert_eq!(*n, 1), _ => panic!("wrong type") }
+            match &row1[1] { Value::Varchar(s) => assert_eq!(s, "fix bug"), _ => panic!("wrong type") }
+
+            let row2 = table.get_row(2).unwrap();
+            match &row2[0] { Value::Int(n) => assert_eq!(*n, 2), _ => panic!("wrong type") }
+            match &row2[1] { Value::Varchar(s) => assert_eq!(s, "add tests"), _ => panic!("wrong type") }
+
+            assert!(table.get_row(99).is_none());
+        }
+
+        std::fs::remove_file(filename).unwrap();
+    }
+
+    #[test]
+    fn test_serialize_deserialize_catalog() {
+        let tables = vec![
+            TableMeta {
+                name: "users".to_string(),
+                schema: Schema {
+                    columns: vec![
+                        Column { name: "id".to_string(), data_type: DataType::Int },
+                        Column { name: "name".to_string(), data_type: DataType::Varchar(32) },
+                        Column { name: "active".to_string(), data_type: DataType::Bool },
+                    ],
+                    primary_key: 0,
+                },
+                root_page_id: 1,
+                degree: 3,
+            },
+            TableMeta {
+                name: "jobs".to_string(),
+                schema: Schema {
+                    columns: vec![
+                        Column { name: "id".to_string(), data_type: DataType::Int },
+                        Column { name: "title".to_string(), data_type: DataType::Varchar(64) },
+                    ],
+                    primary_key: 0,
+                },
+                root_page_id: 5,
+                degree: 4,
+            },
+        ];
+
+        let buf = Catalog::serialize_catalog(&tables, 10);
+        let (result, next_page_id) = Catalog::deserialize_catalog(&buf);
+
+        assert_eq!(next_page_id, 10);
+        assert_eq!(result.len(), 2);
+
+        assert_eq!(result[0].name, "users");
+        assert_eq!(result[0].root_page_id, 1);
+        assert_eq!(result[0].degree, 3);
+        assert_eq!(result[0].schema.primary_key, 0);
+        assert_eq!(result[0].schema.columns.len(), 3);
+        assert_eq!(result[0].schema.columns[1].name, "name");
+
+        assert_eq!(result[1].name, "jobs");
+        assert_eq!(result[1].root_page_id, 5);
+        assert_eq!(result[1].degree, 4);
+        assert_eq!(result[1].schema.columns.len(), 2);
+    }
+}
