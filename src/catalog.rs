@@ -21,13 +21,24 @@ pub struct TableMeta {
 
 impl Catalog {
     pub fn new(pool: BufferPool) -> Self {
-        Catalog {
-            pool: Rc::new(RefCell::new(pool)),
-            tables: Vec::new(),
-            next_page_id: 1,
+        let pool = Rc::new(RefCell::new(pool));
+        let page = pool.borrow_mut().get_page(0).clone();
+        let (tables, next_page_id) = Catalog::deserialize_catalog(&page);
+
+        if next_page_id > 0 {
+            Catalog {
+                pool,
+                tables,
+                next_page_id,
+            }
+        } else {
+            Catalog {
+                pool,
+                tables: Vec::new(),
+                next_page_id: 1,
+            }
         }
     }
-
     pub fn create_table(&mut self, name: &str, schema: Schema, degree: usize) {
         let root_page_id = self.next_page_id;
         self.next_page_id += 1;
@@ -59,9 +70,12 @@ impl Catalog {
         ))
     }
 
-    pub fn serialize_catalog(tables: &[TableMeta]) -> [u8; PAGE_SIZE] {
+    pub fn serialize_catalog(tables: &[TableMeta], next_page_id: u32) -> [u8; PAGE_SIZE] {
         let mut buf = [0u8; PAGE_SIZE];
         let mut offset = 0;
+
+        buf[offset..offset + 4].copy_from_slice(&next_page_id.to_le_bytes());
+        offset += 4;
 
         // write num_tables
         let num_tables = tables.len() as u16;
@@ -123,9 +137,17 @@ impl Catalog {
         buf
     }
 
-    pub fn deserialize_catalog(buf: &[u8; PAGE_SIZE]) -> Vec<TableMeta> {
+    pub fn deserialize_catalog(buf: &[u8; PAGE_SIZE]) -> (Vec<TableMeta>, u32) {
         let mut offset = 0;
         let mut tables = Vec::new();
+
+        let next_page_id = u32::from_le_bytes([
+            buf[offset],
+            buf[offset + 1],
+            buf[offset + 2],
+            buf[offset + 3],
+        ]);
+        offset += 4;
 
         let num_tables = u16::from_le_bytes([buf[offset], buf[offset + 1]]) as usize;
         offset += 2;
@@ -213,10 +235,18 @@ impl Catalog {
             });
         }
 
-        tables
+        (tables, next_page_id)
+    }
+
+    pub fn update_next_page_id(&mut self, id: u32) {
+        if id > self.next_page_id {
+            self.next_page_id = id;
+        }
     }
 
     pub fn flush(&mut self) {
+        let data = Catalog::serialize_catalog(&self.tables, self.next_page_id);
+        self.pool.borrow_mut().write_page(0, data);
         self.pool.borrow_mut().flush();
     }
 }
