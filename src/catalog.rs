@@ -263,7 +263,7 @@ mod tests {
 
         {
             let dm = DiskManager::new(filename);
-            let pool = BufferPool::new(dm);
+            let pool = BufferPool::new(dm, 64);
             let mut catalog = Catalog::new(pool);
 
             catalog.create_table("jobs", Schema {
@@ -283,7 +283,7 @@ mod tests {
 
         {
             let dm = DiskManager::new(filename);
-            let pool = BufferPool::new(dm);
+            let pool = BufferPool::new(dm, 64);
             let mut catalog = Catalog::new(pool);
 
             let mut table = catalog.get_table("jobs").unwrap();

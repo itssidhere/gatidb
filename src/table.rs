@@ -160,7 +160,7 @@ mod tests {
 
         let filename = "test_table.db";
         let dm = DiskManager::new(filename);
-        let pool = Rc::new(RefCell::new(BufferPool::new(dm)));
+        let pool = Rc::new(RefCell::new(BufferPool::new(dm, 64)));
         let schema = users_schema();
         let mut table = Table::new("users", schema, pool, 2);
 

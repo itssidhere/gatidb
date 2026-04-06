@@ -11,7 +11,7 @@ use gatidb::{
 fn main() {
     {
         let dm = DiskManager::new("gatidb.db");
-        let pool = BufferPool::new(dm);
+        let pool = BufferPool::new(dm, 64);
         let mut catalog = Catalog::new(pool);
 
         catalog.create_table(
@@ -41,7 +41,7 @@ fn main() {
 
     {
         let dm = DiskManager::new("gatidb.db");
-        let pool = BufferPool::new(dm);
+        let pool = BufferPool::new(dm, 64);
         let catalog = Catalog::new(pool);
 
         let mut table = catalog.get_table("jobs").unwrap();

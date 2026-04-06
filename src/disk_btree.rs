@@ -398,7 +398,7 @@ mod tests {
 
     fn make_tree(filename: &str, degree: usize) -> DiskBtree {
         let dm = DiskManager::new(filename);
-        let pool = Rc::new(RefCell::new(BufferPool::new(dm)));
+        let pool = Rc::new(RefCell::new(BufferPool::new(dm, 64)));
         DiskBtree::new(pool, degree)
     }
 
@@ -450,7 +450,7 @@ mod tests {
 
         {
             let dm = DiskManager::new(filename);
-            let mut pool = BufferPool::new(dm);
+            let mut pool = BufferPool::new(dm, 64);
 
             let page = pool.get_page(0);
             let (_, keys, _, _) = deserialize_node(page);
