@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use crate::buffer::BufferPool;
 use crate::disk::PAGE_SIZE;
-use crate::page::serialize_node;
+use crate::page::{PAGE_HEADER_SIZE, serialize_node};
 use crate::table::{Column, DataType, Schema, Table};
 
 pub struct Catalog {
@@ -72,7 +72,7 @@ impl Catalog {
 
     pub fn serialize_catalog(tables: &[TableMeta], next_page_id: u32) -> [u8; PAGE_SIZE] {
         let mut buf = [0u8; PAGE_SIZE];
-        let mut offset = 0;
+        let mut offset = PAGE_HEADER_SIZE;
 
         buf[offset..offset + 4].copy_from_slice(&next_page_id.to_le_bytes());
         offset += 4;
@@ -138,7 +138,7 @@ impl Catalog {
     }
 
     pub fn deserialize_catalog(buf: &[u8; PAGE_SIZE]) -> (Vec<TableMeta>, u32) {
-        let mut offset = 0;
+        let mut offset = PAGE_HEADER_SIZE;
         let mut tables = Vec::new();
 
         let next_page_id = u32::from_le_bytes([

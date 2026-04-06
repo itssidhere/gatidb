@@ -2,6 +2,8 @@ use crate::disk::PAGE_SIZE;
 
 pub const VALUE_SIZE: usize = 256;
 
+pub const PAGE_HEADER_SIZE: usize = 8; // 8 bytes for u64 LSN
+
 pub fn serialize_node(
     is_leaf: bool,
     keys: &[i32],
@@ -9,7 +11,7 @@ pub fn serialize_node(
     children: &[u32], // page ids, not btreenode pointers
 ) -> [u8; PAGE_SIZE] {
     let mut buf = [0u8; PAGE_SIZE];
-    let mut offset = 0;
+    let mut offset = PAGE_HEADER_SIZE;
 
     // is_leaf
     buf[offset] = is_leaf as u8;
@@ -43,7 +45,7 @@ pub fn serialize_node(
 }
 
 pub fn deserialize_node(buf: &[u8; PAGE_SIZE]) -> (bool, Vec<i32>, Vec<Vec<u8>>, Vec<u32>) {
-    let mut offset = 0;
+    let mut offset = PAGE_HEADER_SIZE;
 
     let is_leaf = buf[offset] != 0;
     offset += 1;
@@ -90,6 +92,15 @@ pub fn deserialize_node(buf: &[u8; PAGE_SIZE]) -> (bool, Vec<i32>, Vec<Vec<u8>>,
     (is_leaf, keys, values, children)
 }
 
+pub fn get_page_lsn(page: &[u8; PAGE_SIZE]) -> u64{
+    u64::from_le_bytes([
+        page[0], page[1], page[2], page[3],
+        page[4], page[5], page[6], page[7],
+    ])
+}
+pub fn set_page_lsn(page: &mut [u8; PAGE_SIZE], lsn:u64){
+    page[0..8].copy_from_slice(&lsn.to_le_bytes());
+}
 #[cfg(test)]
 mod tests {
     use super::*;
