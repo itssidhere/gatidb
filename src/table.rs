@@ -202,6 +202,55 @@ mod tests {
         let _ = std::fs::remove_file(filename);
         let _ = std::fs::remove_file(wal_file);
     }
+
+    #[test]
+    fn test_table_scan_decodes_rows() {
+        use crate::disk::DiskManager;
+        use crate::wal::Wal;
+
+        let filename = "test_table_scan.db";
+        let wal_file = "test_table_scan.wal";
+        let dm = DiskManager::new(filename);
+        let wal = Wal::new(wal_file);
+        let pool = Rc::new(RefCell::new(BufferPool::new(dm, wal, 64)));
+        let schema = users_schema();
+        let mut table = Table::new("users", schema, pool, 2);
+
+        // insert in scrambled order
+        let people = [
+            (3, "Carol", 28, true),
+            (1, "Alice", 25, true),
+            (5, "Eve",   40, false),
+            (2, "Bob",   30, false),
+            (4, "Dan",   35, true),
+        ];
+        for (id, name, age, active) in people {
+            table.insert_row(&[
+                Value::Int(id),
+                Value::Varchar(name.to_string()),
+                Value::Int(age),
+                Value::Bool(active),
+            ]);
+        }
+
+        // [2, 5) -> ids 2, 3, 4 in sorted order
+        let rows = table.scan(2, 5);
+        assert_eq!(rows.len(), 3);
+
+        let expected = [(2, "Bob", 30, false), (3, "Carol", 28, true), (4, "Dan", 35, true)];
+        for (row, (id, name, age, active)) in rows.iter().zip(expected.iter()) {
+            match &row[0] { Value::Int(n) => assert_eq!(*n, *id), _ => panic!("wrong type") }
+            match &row[1] { Value::Varchar(s) => assert_eq!(s, name), _ => panic!("wrong type") }
+            match &row[2] { Value::Int(n) => assert_eq!(*n, *age), _ => panic!("wrong type") }
+            match &row[3] { Value::Bool(b) => assert_eq!(*b, *active), _ => panic!("wrong type") }
+        }
+
+        // empty range
+        assert!(table.scan(100, 200).is_empty());
+
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(wal_file);
+    }
 }
 
 pub struct Table {
@@ -250,5 +299,9 @@ impl Table {
 
     pub fn flush(&mut self) {
         self.tree.flush();
+    }
+
+    pub fn scan(&mut self, start: i32, end: i32) -> Vec<Vec<Value>> {
+        self.tree.scan(start, end).into_iter().map(|(_, bytes) | self.schema.decode_row(&bytes)).collect()
     }
 }

@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::i32;
 use std::rc::Rc;
 
 use crate::buffer::BufferPool;
@@ -74,6 +75,49 @@ impl DiskBtree {
         let (is_leaf, keys, _, children) = deserialize_node(&page);
         if keys.is_empty() && !is_leaf {
             self.root_page_id = children[0];
+        }
+    }
+
+    pub fn scan(&mut self, start: i32, end: i32) -> Vec<(i32, Vec<u8>)> {
+        let mut out = Vec::new();
+        self.scan_node(self.root_page_id, start, end, &mut out);
+        out
+    }
+
+    pub fn scan_all(&mut self) -> Vec<(i32, Vec<u8>)> {
+        self.scan(i32::MIN, i32::MAX)
+    }
+
+    fn scan_node(&mut self, page_id: u32, start: i32, end:i32, out: &mut Vec<(i32, Vec<u8>)>) {
+        let page = self.pool.borrow_mut().get_page(page_id).clone();
+        let (is_leaf, keys, values, children) = deserialize_node(&page);
+
+        if is_leaf {
+            for (i, k) in keys.iter().enumerate() {
+                if *k >= end { break; }
+
+                if *k >= start {
+                    out.push((*k, values[i].clone()))
+                }
+            }
+            return;
+        }
+
+        for i in 0..=keys.len() {
+            let left_ok = i == 0 || keys[i-1] < end;
+            let right_ok = i == keys.len() || keys[i] >= start;
+
+            if left_ok && right_ok {
+                self.scan_node(children[i], start, end, out);
+            }
+
+            if i < keys.len() {
+                if keys[i] >= end { return ;}
+
+                if keys[i] >= start {
+                    out.push((keys[i], values[i].clone()))
+                }
+            }
         }
     }
 
@@ -557,5 +601,195 @@ mod tests {
             let _ = std::fs::remove_file(&filename);
             let _ = std::fs::remove_file(format!("{}.wal", filename));
         }
+    }
+
+    // ---- Range scan tests ----
+
+    #[test]
+    fn test_scan_empty_tree() {
+        let filename = "test_scan_empty.db";
+        let mut tree = make_tree(filename, 2);
+
+        assert_eq!(tree.scan(0, 100), vec![]);
+        assert_eq!(tree.scan_all(), vec![]);
+
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(format!("{}.wal", filename));
+    }
+
+    #[test]
+    fn test_scan_single_node() {
+        let filename = "test_scan_single.db";
+        let mut tree = make_tree(filename, 4); // capacity 7 keys before split
+
+        // insert out of order to verify sort
+        for k in [3, 1, 4, 9, 5] {
+            tree.insert(k, format!("v{}", k).into_bytes());
+        }
+
+        let result = tree.scan_all();
+        let keys: Vec<i32> = result.iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys, vec![1, 3, 4, 5, 9]);
+
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(format!("{}.wal", filename));
+    }
+
+    #[test]
+    fn test_scan_multi_level_returns_all_sorted() {
+        let filename = "test_scan_multi.db";
+        let mut tree = make_tree(filename, 2); // small degree => many splits
+
+        // insert in scrambled order
+        let order: [i32; 20] = [13, 5, 17, 2, 9, 0, 14, 8, 3, 11, 19, 7, 15, 1, 12, 18, 6, 10, 4, 16];
+        for k in order {
+            tree.insert(k, format!("v{}", k).into_bytes());
+        }
+
+        let result = tree.scan_all();
+        assert_eq!(result.len(), 20);
+        let keys: Vec<i32> = result.iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys, (0..20).collect::<Vec<_>>());
+
+        // verify values match keys
+        for (k, v) in &result {
+            assert_eq!(v, &format!("v{}", k).into_bytes());
+        }
+
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(format!("{}.wal", filename));
+    }
+
+    #[test]
+    fn test_scan_range_subset() {
+        let filename = "test_scan_subset.db";
+        let mut tree = make_tree(filename, 2);
+
+        for i in 0..100 {
+            tree.insert(i, format!("v{}", i).into_bytes());
+        }
+
+        let result = tree.scan(20, 50);
+        let keys: Vec<i32> = result.iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys, (20..50).collect::<Vec<_>>(), "half-open: 50 excluded");
+        assert_eq!(result.len(), 30);
+
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(format!("{}.wal", filename));
+    }
+
+    #[test]
+    fn test_scan_range_outside() {
+        let filename = "test_scan_outside.db";
+        let mut tree = make_tree(filename, 2);
+
+        for i in 0..50 {
+            tree.insert(i, format!("v{}", i).into_bytes());
+        }
+
+        // range above all keys
+        assert_eq!(tree.scan(200, 300), vec![]);
+        // range below all keys
+        assert_eq!(tree.scan(-100, -10), vec![]);
+
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(format!("{}.wal", filename));
+    }
+
+    #[test]
+    fn test_scan_range_partial_overlap_left() {
+        let filename = "test_scan_overlap_left.db";
+        let mut tree = make_tree(filename, 2);
+
+        for i in 0..100 {
+            tree.insert(i, format!("v{}", i).into_bytes());
+        }
+
+        // start below the lowest key
+        let result = tree.scan(-10, 5);
+        let keys: Vec<i32> = result.iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys, vec![0, 1, 2, 3, 4]);
+
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(format!("{}.wal", filename));
+    }
+
+    #[test]
+    fn test_scan_range_partial_overlap_right() {
+        let filename = "test_scan_overlap_right.db";
+        let mut tree = make_tree(filename, 2);
+
+        for i in 0..100 {
+            tree.insert(i, format!("v{}", i).into_bytes());
+        }
+
+        // end above the highest key
+        let result = tree.scan(95, 200);
+        let keys: Vec<i32> = result.iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys, vec![95, 96, 97, 98, 99]);
+
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(format!("{}.wal", filename));
+    }
+
+    #[test]
+    fn test_scan_after_deletes() {
+        let filename = "test_scan_after_delete.db";
+        let mut tree = make_tree(filename, 2);
+
+        for i in 0..20 {
+            tree.insert(i, format!("v{}", i).into_bytes());
+        }
+        // delete evens
+        for i in (0..20).step_by(2) {
+            tree.delete(i);
+        }
+
+        let result = tree.scan_all();
+        let keys: Vec<i32> = result.iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys, vec![1, 3, 5, 7, 9, 11, 13, 15, 17, 19]);
+
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(format!("{}.wal", filename));
+    }
+
+    #[test]
+    fn test_scan_degenerate_ranges() {
+        let filename = "test_scan_degenerate.db";
+        let mut tree = make_tree(filename, 2);
+
+        for i in 0..10 {
+            tree.insert(i, format!("v{}", i).into_bytes());
+        }
+
+        // empty range start == end
+        assert_eq!(tree.scan(5, 5), vec![]);
+        // inverted range start > end
+        assert_eq!(tree.scan(7, 3), vec![]);
+        // single-element range [5, 6) should return just key 5
+        let result = tree.scan(5, 6);
+        let keys: Vec<i32> = result.iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys, vec![5]);
+
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(format!("{}.wal", filename));
+    }
+
+    #[test]
+    fn test_scan_boundaries_are_half_open() {
+        let filename = "test_scan_boundaries.db";
+        let mut tree = make_tree(filename, 2);
+
+        for i in 0..10 {
+            tree.insert(i, format!("v{}", i).into_bytes());
+        }
+
+        // [3, 7) -> 3, 4, 5, 6
+        let result = tree.scan(3, 7);
+        let keys: Vec<i32> = result.iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys, vec![3, 4, 5, 6], "start inclusive, end exclusive");
+
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(format!("{}.wal", filename));
     }
 }
