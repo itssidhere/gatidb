@@ -1,160 +1,203 @@
 # gatidb
 
-A relational database management system written from scratch in Rust. Think MySQL/PostgreSQL, but built from zero — no dependencies on existing database engines. The goal is a fully functional, ACID-compliant SQL database with its own storage engine, query planner, and wire protocol.
+A relational database written from scratch in Rust — zero external dependencies, built layer by layer for learning. The goal: an ACID-compliant SQL database with its own storage engine, query planner, and recovery system.
 
-## Current Status
+## Status
 
-gatidb is in early development. The B-Tree storage engine is implemented with insert, search, and delete — both in-memory and disk-backed with page-based persistence through a buffer pool.
-
-### Benchmarks
-
-```
-insert 1000 keys        time:   ~97 µs   (~97 ns per insert)
-search hit              time:   ~12 ns
-search miss             time:   ~13 ns
-delete 1000 keys        time:   ~146 µs  (~146 ns per delete)
-```
-*B-Tree degree: 64 (127 keys per node), binary search within nodes*
-
-Run benchmarks yourself:
-```bash
-cargo bench
-```
+Working today: a disk-backed B-Tree storage engine with a buffer pool, write-ahead logging, crash recovery, checkpoints, a typed schema layer, and a persistent table catalog. You can create tables, insert rows, get rows by primary key, persist across restarts, and recover from a crash by replaying the WAL.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│          TCP Server / Wire Protocol     │  <- client connections
-├─────────────────────────────────────────┤
-│            SQL Parser                   │  <- parsing SQL statements
-├─────────────────────────────────────────┤
-│           Query Engine                  │  <- query planning, execution
-├─────────────────────────────────────────┤
-│           Table / Schema                │  <- table definitions, rows, columns
-├─────────────────────────────────────────┤
-│         Transaction Manager             │  <- ACID, MVCC, WAL
-├─────────────────────────────────────────┤
-│      B-Tree Storage Engine              │  <- disk-backed B-Tree
-├─────────────────────────────────────────┤
-│          Buffer Pool / Cache            │  <- page caching in memory
-├─────────────────────────────────────────┤
-│         Disk Manager / Pager            │  <- page-based file I/O (4KB pages)
-└─────────────────────────────────────────┘
+                  ┌──────────────────────────────┐
+                  │           main.rs            │   demo / entry point
+                  └──────────────┬───────────────┘
+                                 │
+                  ┌──────────────▼───────────────┐
+                  │           Catalog            │   table metadata persisted on page 0
+                  └──────────────┬───────────────┘
+                                 │
+                  ┌──────────────▼───────────────┐
+                  │            Table             │   schema + encode/decode rows
+                  └──────────────┬───────────────┘
+                                 │
+                  ┌──────────────▼───────────────┐
+                  │          DiskBtree           │   B-Tree over page IDs
+                  └──────────────┬───────────────┘
+                                 │
+                  ┌──────────────▼───────────────┐
+                  │          BufferPool          │   LRU cache + dirty tracking
+                  │            ┌─────┐           │
+                  │   ┌────────┤ WAL ├────────┐  │   write-ahead rule:
+                  │   │        └─────┘        │  │   WAL flushed before
+                  │   ▼                       ▼  │   data page flushed
+                  │ ┌──────┐             ┌──────┐│
+                  │ │ WAL  │             │ Disk ││
+                  │ │ file │             │ Mgr  ││
+                  │ └──┬───┘             └──┬───┘│
+                  └────┼────────────────────┼────┘
+                       ▼                    ▼
+                 gatidb.wal           gatidb.db
 ```
+
+### Layout: a 4 KiB page
+
+```
+ byte 0                 8                                          4096
+ ┌──────────────────────┬──────────────────────────────────────────┐
+ │   page LSN (u64 LE)  │   node payload                           │
+ │                      │   (is_leaf, num_keys, keys, values,      │
+ │   PAGE_HEADER_SIZE   │    children — see src/page.rs)           │
+ └──────────────────────┴──────────────────────────────────────────┘
+```
+
+The first 8 bytes of every page hold the LSN of the WAL record that last modified it. Recovery uses this to decide which records to replay.
+
+### Layout: a WAL record (4108 bytes, fixed)
+
+```
+ byte 0           8           12                                4108
+ ┌────────────────┬───────────┬─────────────────────────────────┐
+ │   lsn (u64)    │ page_id   │   page_data (full 4 KiB FPI)    │
+ │                │  (u32)    │                                 │
+ └────────────────┴───────────┴─────────────────────────────────┘
+```
+
+Full-page-image WAL: every page modification logs the entire page. Simple, no diff logic, idempotent on replay.
+
+### Write path
+
+```
+  caller                BufferPool                 WAL                Disk
+    │                       │                       │                   │
+    │  write_page(id, p) ──▶│                       │                   │
+    │                       │  log_page(id, p) ────▶│                   │
+    │                       │◀──── lsn ─────────────│                   │
+    │                       │ stamp lsn into page   │                   │
+    │                       │ mark dirty, cache it  │                   │
+    │                       │                       │                   │
+    │  ... time passes, eviction triggers ...       │                   │
+    │                       │                       │                   │
+    │                       │  flush_to(page_lsn) ─▶│                   │
+    │                       │                       │   sync to disk    │
+    │                       │  write_page ─────────────────────────────▶│
+```
+
+### Recovery flow
+
+```
+  1.  read checkpoint LSN from .ckpt  (0 if missing)
+  2.  read all WAL records from that LSN onward
+  3.  for each record:
+         disk_page = disk.read_page(record.page_id)
+         if get_page_lsn(disk_page) < record.lsn:
+              disk.write_page(record.page_id, record.page_data)
+```
+
+## Demo
+
+```rust
+let dm   = DiskManager::new("gatidb.db");
+let wal  = Wal::new("gatidb.wal");
+let pool = BufferPool::new(dm, wal, 64);
+let mut catalog = Catalog::new(pool);
+
+catalog.create_table("jobs", Schema {
+    columns: vec![
+        Column { name: "id".into(),    data_type: DataType::Int },
+        Column { name: "title".into(), data_type: DataType::Varchar(64) },
+    ],
+    primary_key: 0,
+}, 3);
+
+let mut table = catalog.get_table("jobs").unwrap();
+table.insert_row(&[Value::Int(1), Value::Varchar("fix bug".into())]);
+catalog.update_next_page_id(table.next_page_id());
+catalog.flush();
+```
+
+Run it:
+
+```bash
+cargo run
+```
+
+## Modules
+
+| File              | Responsibility                                                  |
+|-------------------|-----------------------------------------------------------------|
+| `src/disk.rs`     | Page-aligned file I/O                                           |
+| `src/page.rs`     | Node serialization, LSN header helpers                          |
+| `src/wal.rs`      | WAL records, log writer, checkpoint, recovery                   |
+| `src/buffer.rs`   | LRU buffer pool, write-ahead rule enforcement                   |
+| `src/disk_btree.rs` | B-Tree operating over page IDs                                |
+| `src/table.rs`    | Schema, row encode/decode, table API                            |
+| `src/catalog.rs`  | Table metadata persisted to page 0                              |
+| `src/main.rs`     | Demo                                                            |
 
 ## Roadmap
 
-### Storage Engine
-- [x] In-memory B-Tree data structure
-- [x] B-Tree insert with node splitting
-- [x] B-Tree search (point lookup)
-- [x] Benchmarks with Criterion
-- [x] B-Tree delete with rebalancing (merge/borrow)
-- [ ] Support generic key/value types
-- [ ] Range queries and iterators
-- [ ] Bulk loading
-- [ ] B+ Tree variant (data only in leaves, leaf-level linked list)
+### Storage engine
+- [x] Disk manager (4 KiB pages)
+- [x] LRU buffer pool with dirty tracking
+- [x] B-Tree insert / search / delete with split, borrow, merge
+- [x] Node serialization to fixed-size pages
+- [ ] Range scans / iterators (next)
+- [ ] B+ Tree variant (data only in leaves, leaf links)
 
-### Persistence
-- [x] Page-based storage (4KB pages)
-- [x] Disk Manager (read/write pages to file)
-- [x] Buffer Pool (in-memory page cache with dirty tracking)
-- [x] Disk-backed B-Tree (page IDs instead of memory pointers)
-- [x] Node serialization/deserialization to bytes
-- [ ] Buffer pool LRU eviction (fixed-size cache)
-- [ ] Write-Ahead Log (WAL) for crash recovery
+### Durability
+- [x] Write-ahead log (full page images)
+- [x] Page LSN header + write-ahead rule on eviction
+- [x] Checkpoint (flush dirty pages, persist checkpoint LSN)
+- [x] Crash recovery (redo from checkpoint LSN)
+- [ ] WAL truncation after checkpoint
+- [ ] Group commit / batched fsync
+
+### Schema and catalog
+- [x] Schema with `Int`, `Varchar(n)`, `Bool`
+- [x] Row encode/decode
+- [x] Persistent table catalog
+- [ ] `Float`, `Timestamp`, `NULL` semantics
+- [ ] `ALTER TABLE`, `DROP TABLE`
 
 ### Transactions
-- [ ] ACID transactions
-- [ ] MVCC (Multi-Version Concurrency Control)
-- [ ] Snapshot isolation
-- [ ] Deadlock detection
+- [ ] `BEGIN` / `COMMIT` / `ABORT`
+- [ ] Transaction IDs in WAL records
+- [ ] Redo only committed (no-steal) — simpler than full ARIES
+- [ ] Full ARIES (analysis / redo / undo with CLRs)
+- [ ] MVCC + snapshot isolation
 
-### Concurrency
-- [ ] Reader-writer locks on B-Tree nodes
-- [ ] Lock-free reads with MVCC
-- [ ] Connection pooling
-
-### Table & Schema
-- [ ] Row format (fixed-length and variable-length columns)
-- [ ] Data types (INT, VARCHAR, BOOL, FLOAT, TIMESTAMP)
-- [ ] CREATE TABLE / DROP TABLE
-- [ ] Schema catalog (system tables)
-- [ ] ALTER TABLE
-
-### SQL Parser
-- [ ] Tokenizer / Lexer
-- [ ] Parser (recursive descent or PEG)
-- [ ] SELECT, INSERT, UPDATE, DELETE
-- [ ] WHERE clauses with AND/OR
-- [ ] JOINs (INNER, LEFT, RIGHT)
-- [ ] ORDER BY, GROUP BY, LIMIT
-- [ ] Aggregate functions (COUNT, SUM, AVG, MIN, MAX)
-- [ ] Subqueries
-
-### Query Engine
-- [ ] Query planner
-- [ ] Query optimizer (cost-based)
-- [ ] Sequential scan
-- [ ] Index scan
-- [ ] Nested loop join
-- [ ] Hash join
-- [ ] Sort-merge join
-- [ ] Prepared statements
+### Query layer
+- [ ] REPL
+- [ ] Tokenizer + parser
+- [ ] `SELECT` / `INSERT` / `UPDATE` / `DELETE`
+- [ ] `WHERE`, `ORDER BY`, `LIMIT`
+- [ ] Joins, aggregates, subqueries
+- [ ] Cost-based planner + `EXPLAIN`
 
 ### Indexing
-- [ ] Primary key index (B-Tree)
+- [x] Primary key (B-Tree on PK)
 - [ ] Secondary indexes
 - [ ] Composite indexes
 - [ ] Index-only scans
 
+### Concurrency
+- [ ] Page latches (RwLock per page)
+- [ ] Lock manager
+- [ ] Deadlock detection
+
 ### Networking
 - [ ] TCP server
-- [ ] Wire protocol (MySQL or PostgreSQL compatible, or custom)
-- [ ] Client library
-- [ ] Connection handling and authentication
-- [ ] TLS support
-
-### Observability
-- [ ] Logging
-- [ ] Metrics and statistics
-- [ ] EXPLAIN query plans
-
-## How the B-Tree works
-
-A B-Tree is a self-balancing tree where each node holds multiple keys. With `degree = 2`, each node holds max 3 keys. Keys are always sorted within a node, and children hold keys in the ranges between parent keys.
-
-```
-        [10,    20,    30]
-       /     |      |     \
-  keys<10  10<k<20  20<k<30  keys>30
-```
-
-### Insert with splitting
-
-```
-Insert 0,1,2: root = [0, 1, 2]  (full)
-
-Insert 3: root splits
-        [1]
-       /    \
-    [0]      [2, 3]
-
-Insert 4,5: right child fills
-        [1, 3]
-       /   |   \
-    [0]   [2]   [4, 5]
-```
+- [ ] Wire protocol (PostgreSQL or custom)
+- [ ] TLS
 
 ## Building
 
 ```bash
-cargo build           # debug build
-cargo build --release # optimized build
-cargo test            # run tests
-cargo bench           # run benchmarks
-cargo run             # run the demo
+cargo build              # debug
+cargo build --release    # optimized
+cargo test               # full test suite (45 tests)
+cargo run                # demo
 ```
 
 ## License
