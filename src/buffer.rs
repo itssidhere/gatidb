@@ -68,6 +68,9 @@ impl BufferPool {
         }
         self.dirty.clear();
     }
+    pub fn current_lsn(&self) -> u64 {
+        self.wal.current_lsn()
+    }
 
     fn touch(&mut self, page_id: u32){
         if let Some(pos) = self.lru_order.iter().position(|&id| id == page_id){
