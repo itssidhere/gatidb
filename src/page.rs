@@ -134,4 +134,18 @@ mod tests {
         assert_eq!(out_values, values);
         assert_eq!(out_children, children);
     }
+
+    #[test]
+    fn test_page_lsn_roundtrip(){
+        let mut page = serialize_node(true, &[10, 20], &[b"a".to_vec(), b"b".to_vec()], &[]);
+        assert_eq!(get_page_lsn(&page), 0); // default
+
+        set_page_lsn(&mut page, 42);
+        assert_eq!(get_page_lsn(&page), 42);
+
+        // LSN doesn't interfere with node data
+        let (is_leaf, keys, values, _) = deserialize_node(&page);
+        assert!(is_leaf);
+        assert_eq!(keys, vec![10, 20]);
+    }
 }

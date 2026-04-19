@@ -1,17 +1,16 @@
-use std::fs::remove_file;
-
 use gatidb::{
-    btree::BTree,
     buffer::BufferPool,
-    catalog::{self, Catalog},
-    disk::{self, DiskManager},
-    table::{Column, DataType, Schema, Table, Value},
+    catalog::Catalog,
+    disk::DiskManager,
+    table::{Column, DataType, Schema, Value},
+    wal::Wal,
 };
 
 fn main() {
     {
         let dm = DiskManager::new("gatidb.db");
-        let pool = BufferPool::new(dm, 64);
+        let wal = Wal::new("gatidb.wal");
+        let pool = BufferPool::new(dm, wal, 64);
         let mut catalog = Catalog::new(pool);
 
         catalog.create_table(
@@ -41,7 +40,8 @@ fn main() {
 
     {
         let dm = DiskManager::new("gatidb.db");
-        let pool = BufferPool::new(dm, 64);
+        let wal = Wal::new("gatidb.wal");
+        let pool = BufferPool::new(dm, wal, 64);
         let catalog = Catalog::new(pool);
 
         let mut table = catalog.get_table("jobs").unwrap();
@@ -49,5 +49,6 @@ fn main() {
         println!("Read back: {:?}", row);
     }
 
-    std::fs::remove_file("gatidb.db").unwrap();
+    let _ = std::fs::remove_file("gatidb.db");
+    let _ = std::fs::remove_file("gatidb.wal");
 }

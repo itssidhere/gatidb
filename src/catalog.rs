@@ -260,10 +260,12 @@ mod tests {
     #[test]
     fn test_catalog_persistence() {
         let filename = "test_catalog_persist.db";
+        let wal_file = "test_catalog_persist.wal";
 
         {
             let dm = DiskManager::new(filename);
-            let pool = BufferPool::new(dm, 64);
+            let wal = crate::wal::Wal::new(wal_file);
+            let pool = BufferPool::new(dm, wal, 64);
             let mut catalog = Catalog::new(pool);
 
             catalog.create_table("jobs", Schema {
@@ -283,7 +285,8 @@ mod tests {
 
         {
             let dm = DiskManager::new(filename);
-            let pool = BufferPool::new(dm, 64);
+            let wal = crate::wal::Wal::new(wal_file);
+            let pool = BufferPool::new(dm, wal, 64);
             let mut catalog = Catalog::new(pool);
 
             let mut table = catalog.get_table("jobs").unwrap();
@@ -299,7 +302,8 @@ mod tests {
             assert!(table.get_row(99).is_none());
         }
 
-        std::fs::remove_file(filename).unwrap();
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(wal_file);
     }
 
     #[test]

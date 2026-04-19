@@ -1,20 +1,24 @@
-use crate::{disk::{DiskManager, PAGE_SIZE}, page};
+use crate::{disk::{DiskManager, PAGE_SIZE}, page::set_page_lsn, wal::Wal};
 use std::collections::HashMap;
 
 pub struct BufferPool {
     disk: DiskManager,
+    wal: Wal,
     pages: HashMap<u32, [u8; PAGE_SIZE]>,
     dirty: HashMap<u32, bool>,
+    page_lsn: HashMap<u32, u64>,
     capacity: usize,
     lru_order: Vec<u32>,
 }
 
 impl BufferPool {
-    pub fn new(disk: DiskManager, capacity: usize) -> Self {
+    pub fn new(disk: DiskManager, wal: Wal, capacity: usize) -> Self {
         BufferPool {
             disk,
+            wal,
             pages: HashMap::new(),
             dirty: HashMap::new(),
+            page_lsn: HashMap::new(),
             capacity,
             lru_order: Vec::new(),
         }
@@ -35,19 +39,27 @@ impl BufferPool {
         &self.pages[&page_id]
     }
 
-    pub fn write_page(&mut self, page_id: u32, data: [u8; PAGE_SIZE]) {
+    pub fn write_page(&mut self, page_id: u32, mut data: [u8; PAGE_SIZE]) {
         if !self.pages.contains_key(&page_id){
             while self.pages.len() >= self.capacity {
                 self.evict();
             }
         }
+
+        let lsn = self.wal.log_page(page_id, &data);
+
+        set_page_lsn(&mut data, lsn);
+        
+        
     
         self.pages.insert(page_id, data);
         self.dirty.insert(page_id, true);
+        self.page_lsn.insert(page_id, lsn);
         self.touch(page_id);
     }
 
     pub fn flush(&mut self) {
+        self.wal.flush();
         let dirty_ids: Vec<u32> = self.dirty.keys().cloned().collect();
         for page_id in dirty_ids {
             if let Some(data) = self.pages.get(&page_id) {
@@ -68,6 +80,9 @@ impl BufferPool {
         if let Some(victim_id) = self.lru_order.first().copied(){
             // if dirty, flush to disk before evicting
             if self.dirty.get(&victim_id) == Some(&true) {
+
+                let page_lsn = self.page_lsn.get(&victim_id).copied().unwrap_or(0);
+                self.wal.flush_to(page_lsn);
                 if let Some(data) = self.pages.get(&victim_id){
                     self.disk.write_page(victim_id, data);
                 }
@@ -75,6 +90,7 @@ impl BufferPool {
             }
 
             self.pages.remove(&victim_id);
+            self.page_lsn.remove(&victim_id);
             self.lru_order.remove(0);
         }
     }
@@ -84,51 +100,63 @@ impl BufferPool {
 mod tests {
     use super::*;
     use crate::disk::DiskManager;
+    use crate::page::{PAGE_HEADER_SIZE, get_page_lsn};
+    use crate::wal::Wal;
 
-    fn make_pool(filename: &str, capacity: usize) -> BufferPool {
-        let dm = DiskManager::new(filename);
-        BufferPool::new(dm, capacity)
+    const M: usize = PAGE_HEADER_SIZE; // marker offset (bytes 0-7 are LSN)
+
+    fn make_pool(db: &str, wal: &str, capacity: usize) -> BufferPool {
+        let dm = DiskManager::new(db);
+        let w = Wal::new(wal);
+        BufferPool::new(dm, w, capacity)
     }
 
     fn make_page(marker: u8) -> [u8; PAGE_SIZE] {
         let mut data = [0u8; PAGE_SIZE];
-        data[0] = marker;
+        data[M] = marker; // put marker after the LSN header
         data
     }
 
+    fn cleanup(files: &[&str]) {
+        for f in files {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    // ---- LRU buffer pool tests ----
+
     #[test]
     fn test_basic_get_and_write() {
-        let filename = "test_buf_basic.db";
-        let mut pool = make_pool(filename, 4);
+        let (db, wal) = ("test_buf_basic.db", "test_buf_basic.wal");
+        let mut pool = make_pool(db, wal, 4);
 
         pool.write_page(0, make_page(10));
         pool.write_page(1, make_page(20));
 
-        assert_eq!(pool.get_page(0)[0], 10);
-        assert_eq!(pool.get_page(1)[0], 20);
+        assert_eq!(pool.get_page(0)[M], 10);
+        assert_eq!(pool.get_page(1)[M], 20);
 
-        std::fs::remove_file(filename).unwrap();
+        cleanup(&[db, wal]);
     }
 
     #[test]
     fn test_capacity_respected() {
-        let filename = "test_buf_capacity.db";
-        let mut pool = make_pool(filename, 3);
+        let (db, wal) = ("test_buf_capacity.db", "test_buf_capacity.wal");
+        let mut pool = make_pool(db, wal, 3);
 
         for i in 0..10 {
             pool.write_page(i, make_page(i as u8));
             assert!(pool.pages.len() <= 3, "pool exceeded capacity");
         }
 
-        std::fs::remove_file(filename).unwrap();
+        cleanup(&[db, wal]);
     }
 
     #[test]
     fn test_eviction_flushes_dirty_page() {
-        let filename = "test_buf_evict_dirty.db";
-        let mut pool = make_pool(filename, 3);
+        let (db, wal) = ("test_buf_evict_dirty.db", "test_buf_evict_dirty.wal");
+        let mut pool = make_pool(db, wal, 3);
 
-        // Fill pool with 3 dirty pages
         pool.write_page(0, make_page(10));
         pool.write_page(1, make_page(20));
         pool.write_page(2, make_page(30));
@@ -137,20 +165,18 @@ mod tests {
         pool.write_page(3, make_page(40));
         assert!(!pool.pages.contains_key(&0), "page 0 should be evicted");
 
-        // Page 0 was dirty, so it should have been flushed to disk.
-        // Re-read it — should get the written data back, not zeroes.
+        // Page 0 was dirty so it was flushed. Re-read should get original data.
         let page = pool.get_page(0);
-        assert_eq!(page[0], 10, "dirty page 0 should survive eviction via disk");
+        assert_eq!(page[M], 10, "dirty page 0 should survive eviction via disk");
 
-        std::fs::remove_file(filename).unwrap();
+        cleanup(&[db, wal]);
     }
 
     #[test]
     fn test_lru_order_updated_on_read() {
-        let filename = "test_buf_lru_read.db";
-        let mut pool = make_pool(filename, 3);
+        let (db, wal) = ("test_buf_lru_read.db", "test_buf_lru_read.wal");
+        let mut pool = make_pool(db, wal, 3);
 
-        // Fill: 0, 1, 2 — LRU order is [0, 1, 2]
         pool.write_page(0, make_page(10));
         pool.write_page(1, make_page(20));
         pool.write_page(2, make_page(30));
@@ -166,15 +192,14 @@ mod tests {
         assert!(pool.pages.contains_key(&2));
         assert!(pool.pages.contains_key(&3));
 
-        std::fs::remove_file(filename).unwrap();
+        cleanup(&[db, wal]);
     }
 
     #[test]
     fn test_lru_order_updated_on_write() {
-        let filename = "test_buf_lru_write.db";
-        let mut pool = make_pool(filename, 3);
+        let (db, wal) = ("test_buf_lru_write.db", "test_buf_lru_write.wal");
+        let mut pool = make_pool(db, wal, 3);
 
-        // Fill: 0, 1, 2
         pool.write_page(0, make_page(10));
         pool.write_page(1, make_page(20));
         pool.write_page(2, make_page(30));
@@ -187,77 +212,70 @@ mod tests {
 
         assert!(pool.pages.contains_key(&0));
         assert!(!pool.pages.contains_key(&1));
-        assert_eq!(pool.get_page(0)[0], 15, "page 0 should have updated value");
+        assert_eq!(pool.get_page(0)[M], 15, "page 0 should have updated value");
 
-        std::fs::remove_file(filename).unwrap();
+        cleanup(&[db, wal]);
     }
 
     #[test]
     fn test_evicted_clean_page_reloads_from_disk() {
-        let filename = "test_buf_clean_reload.db";
-        let mut pool = make_pool(filename, 3);
+        let (db, wal) = ("test_buf_clean_reload.db", "test_buf_clean_reload.wal");
+        let mut pool = make_pool(db, wal, 3);
 
-        // Write and flush page 0 (makes it clean on disk)
         pool.write_page(0, make_page(10));
         pool.flush();
 
         pool.write_page(1, make_page(20));
         pool.write_page(2, make_page(30));
 
-        // Access page 0 so it's not LRU, then add pages to evict page 1
         pool.get_page(0);
         pool.write_page(3, make_page(40));
         pool.write_page(4, make_page(50));
 
-        // Page 0 may have been evicted by now, but re-reading should work
         let page = pool.get_page(0);
-        assert_eq!(page[0], 10, "clean page should reload from disk correctly");
+        assert_eq!(page[M], 10, "clean page should reload from disk correctly");
 
-        std::fs::remove_file(filename).unwrap();
+        cleanup(&[db, wal]);
     }
 
     #[test]
     fn test_many_evictions_data_integrity() {
-        let filename = "test_buf_integrity.db";
-        let mut pool = make_pool(filename, 4);
+        let (db, wal) = ("test_buf_integrity.db", "test_buf_integrity.wal");
+        let mut pool = make_pool(db, wal, 4);
 
-        // Write 20 pages through a pool of size 4
         for i in 0u32..20 {
             pool.write_page(i, make_page(i as u8));
         }
 
-        // All data should be retrievable (from cache or disk)
         for i in 0u32..20 {
             let page = pool.get_page(i);
-            assert_eq!(page[0], i as u8, "page {} has wrong data after evictions", i);
+            assert_eq!(page[M], i as u8, "page {} has wrong data after evictions", i);
         }
 
-        std::fs::remove_file(filename).unwrap();
+        cleanup(&[db, wal]);
     }
 
     #[test]
     fn test_flush_writes_all_dirty_pages() {
-        let filename = "test_buf_flush.db";
-        let mut pool = make_pool(filename, 4);
+        let (db, wal) = ("test_buf_flush.db", "test_buf_flush.wal");
+        let mut pool = make_pool(db, wal, 4);
 
         pool.write_page(0, make_page(10));
         pool.write_page(1, make_page(20));
         pool.flush();
 
-        // After flush, dirty map should be empty
         assert!(pool.dirty.is_empty(), "flush should clear dirty map");
 
-        // Data should still be readable from pool
-        assert_eq!(pool.get_page(0)[0], 10);
-        assert_eq!(pool.get_page(1)[0], 20);
+        assert_eq!(pool.get_page(0)[M], 10);
+        assert_eq!(pool.get_page(1)[M], 20);
 
-        std::fs::remove_file(filename).unwrap();
+        cleanup(&[db, wal]);
     }
 
     #[test]
     fn test_capacity_one() {
-        let filename = "test_buf_cap1.db";
-        let mut pool = make_pool(filename, 1);
+        let (db, wal) = ("test_buf_cap1.db", "test_buf_cap1.wal");
+        let mut pool = make_pool(db, wal, 1);
 
         pool.write_page(0, make_page(10));
         pool.write_page(1, make_page(20));
@@ -265,11 +283,68 @@ mod tests {
 
         assert_eq!(pool.pages.len(), 1);
 
-        // All pages should still be retrievable via disk
-        assert_eq!(pool.get_page(0)[0], 10);
-        assert_eq!(pool.get_page(1)[0], 20);
-        assert_eq!(pool.get_page(2)[0], 30);
+        assert_eq!(pool.get_page(0)[M], 10);
+        assert_eq!(pool.get_page(1)[M], 20);
+        assert_eq!(pool.get_page(2)[M], 30);
 
-        std::fs::remove_file(filename).unwrap();
+        cleanup(&[db, wal]);
+    }
+
+    // ---- WAL integration tests ----
+
+    #[test]
+    fn test_write_page_stamps_lsn() {
+        let (db, wal) = ("test_buf_lsn.db", "test_buf_lsn.wal");
+        let mut pool = make_pool(db, wal, 4);
+
+        pool.write_page(0, make_page(10));
+        pool.write_page(1, make_page(20));
+
+        let lsn0 = get_page_lsn(pool.get_page(0));
+        let lsn1 = get_page_lsn(pool.get_page(1));
+
+        assert_eq!(lsn0, 0, "first write should get LSN 0");
+        assert_eq!(lsn1, 1, "second write should get LSN 1");
+
+        cleanup(&[db, wal]);
+    }
+
+    #[test]
+    fn test_lsn_survives_eviction() {
+        let (db, wal) = ("test_buf_lsn_evict.db", "test_buf_lsn_evict.wal");
+        let mut pool = make_pool(db, wal, 2);
+
+        pool.write_page(0, make_page(10)); // LSN 0
+        pool.write_page(1, make_page(20)); // LSN 1
+        pool.write_page(2, make_page(30)); // LSN 2, evicts page 0
+
+        // Page 0 was evicted and flushed to disk. Re-read it.
+        let page = pool.get_page(0);
+        let lsn = get_page_lsn(page);
+        assert_eq!(lsn, 0, "LSN should survive eviction round-trip");
+        assert_eq!(page[M], 10);
+
+        cleanup(&[db, wal]);
+    }
+
+    #[test]
+    fn test_wal_records_written() {
+        let (db, wal_file) = ("test_buf_wal_records.db", "test_buf_wal_records.wal");
+        let mut pool = make_pool(db, wal_file, 4);
+
+        pool.write_page(0, make_page(10));
+        pool.write_page(1, make_page(20));
+        pool.write_page(2, make_page(30));
+        pool.flush();
+
+        // Reopen WAL and verify records are there
+        let mut wal = Wal::new(wal_file);
+        let records = wal.read_from(0);
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].page_id, 0);
+        assert_eq!(records[1].page_id, 1);
+        assert_eq!(records[2].page_id, 2);
+
+        cleanup(&[db, wal_file]);
     }
 }

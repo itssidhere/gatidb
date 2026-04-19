@@ -157,10 +157,13 @@ mod tests {
     #[test]
     fn test_table_insert_and_get() {
         use crate::disk::DiskManager;
+        use crate::wal::Wal;
 
         let filename = "test_table.db";
+        let wal_file = "test_table.wal";
         let dm = DiskManager::new(filename);
-        let pool = Rc::new(RefCell::new(BufferPool::new(dm, 64)));
+        let wal = Wal::new(wal_file);
+        let pool = Rc::new(RefCell::new(BufferPool::new(dm, wal, 64)));
         let schema = users_schema();
         let mut table = Table::new("users", schema, pool, 2);
 
@@ -196,7 +199,8 @@ mod tests {
         assert!(table.get_row(1).is_none());
         assert!(table.get_row(2).is_some());
 
-        std::fs::remove_file(filename).unwrap();
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(wal_file);
     }
 }
 

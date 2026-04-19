@@ -397,8 +397,10 @@ mod tests {
     use crate::disk::DiskManager;
 
     fn make_tree(filename: &str, degree: usize) -> DiskBtree {
+        let wal_file = format!("{}.wal", filename);
         let dm = DiskManager::new(filename);
-        let pool = Rc::new(RefCell::new(BufferPool::new(dm, 64)));
+        let wal = crate::wal::Wal::new(&wal_file);
+        let pool = Rc::new(RefCell::new(BufferPool::new(dm, wal, 64)));
         DiskBtree::new(pool, degree)
     }
 
@@ -416,7 +418,8 @@ mod tests {
         assert_eq!(tree.search(5), Some(b"five".to_vec()));
         assert_eq!(tree.search(99), None);
 
-        std::fs::remove_file(filename).unwrap();
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(format!("{}.wal", filename));
     }
 
     #[test]
@@ -433,12 +436,14 @@ mod tests {
         }
         assert_eq!(tree.search(99), None);
 
-        std::fs::remove_file(filename).unwrap();
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(format!("{}.wal", filename));
     }
 
     #[test]
     fn test_persistence() {
         let filename = "test_disk_btree_persist.db";
+        let wal_file = format!("{}.wal", filename);
 
         {
             let mut tree = make_tree(filename, 2);
@@ -450,14 +455,16 @@ mod tests {
 
         {
             let dm = DiskManager::new(filename);
-            let mut pool = BufferPool::new(dm, 64);
+            let wal = crate::wal::Wal::new(&wal_file);
+            let mut pool = BufferPool::new(dm, wal, 64);
 
             let page = pool.get_page(0);
             let (_, keys, _, _) = deserialize_node(page);
             assert!(!keys.is_empty());
         }
 
-        std::fs::remove_file(filename).unwrap();
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(&wal_file);
     }
 
     #[test]
@@ -471,7 +478,8 @@ mod tests {
         assert_eq!(tree.search(2), None);
         assert_eq!(tree.search(1), Some(b"one".to_vec()));
         assert_eq!(tree.search(3), Some(b"three".to_vec()));
-        std::fs::remove_file(filename).unwrap();
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(format!("{}.wal", filename));
     }
 
     #[test]
@@ -481,7 +489,8 @@ mod tests {
         tree.insert(1, b"one".to_vec());
         tree.delete(99);
         assert_eq!(tree.search(1), Some(b"one".to_vec()));
-        std::fs::remove_file(filename).unwrap();
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(format!("{}.wal", filename));
     }
 
     #[test]
@@ -497,7 +506,8 @@ mod tests {
         for i in 0..10 {
             assert_eq!(tree.search(i), None);
         }
-        std::fs::remove_file(filename).unwrap();
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(format!("{}.wal", filename));
     }
 
     #[test]
@@ -513,7 +523,8 @@ mod tests {
         for i in 3..7 {
             assert_eq!(tree.search(i), Some(format!("v{}", i).into_bytes()));
         }
-        std::fs::remove_file(filename).unwrap();
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(format!("{}.wal", filename));
     }
 
     #[test]
@@ -527,7 +538,8 @@ mod tests {
         for i in 1..10 {
             assert_eq!(tree.search(i), Some(format!("v{}", i).into_bytes()));
         }
-        std::fs::remove_file(filename).unwrap();
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(format!("{}.wal", filename));
     }
 
     #[test]
@@ -542,7 +554,8 @@ mod tests {
                 tree.delete(i);
                 assert_eq!(tree.search(i), None);
             }
-            std::fs::remove_file(&filename).unwrap();
+            let _ = std::fs::remove_file(&filename);
+            let _ = std::fs::remove_file(format!("{}.wal", filename));
         }
     }
 }
