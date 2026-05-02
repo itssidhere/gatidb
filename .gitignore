@@ -1,3 +1,8 @@
-/target
 .claude/**
+/build
+/cmake-build-*
 *.db
+*.wal
+*.ckpt
+/gatidb
+/gatidb_tests
