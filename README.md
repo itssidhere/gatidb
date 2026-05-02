@@ -18,13 +18,6 @@ Working today:
 ## Build
 
 ```bash
-make test
-make demo
-```
-
-CMake is also supported:
-
-```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build --output-on-failure
@@ -75,7 +68,6 @@ src/gatidb.cpp            Storage engine, catalog, SQL tokenizer/parser
 src/main.cpp              Demo executable
 tests/test_gatidb.cpp     Self-contained C++ test binary
 CMakeLists.txt            Build configuration
-Makefile                  Local compiler build path
 ```
 
 ## Storage Format
