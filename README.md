@@ -32,7 +32,7 @@ Run the demo:
 ## Example
 
 ```cpp
-#include "gatidb/gatidb.h"
+#include "gatidb/gatidb.hpp"
 
 using namespace gatidb;
 
@@ -63,7 +63,7 @@ catalog.flush();
 ## Layout
 
 ```text
-include/gatidb/gatidb.h   Public C++ API
+include/gatidb/gatidb.hpp Public C++ API
 src/gatidb.cpp            Storage engine, catalog, SQL tokenizer/parser
 src/main.cpp              Demo executable
 tests/test_gatidb.cpp     Self-contained C++ test binary

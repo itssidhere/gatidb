@@ -1,4 +1,4 @@
-#include "gatidb/gatidb.h"
+#include "gatidb/gatidb.hpp"
 
 #include <filesystem>
 #include <iostream>
