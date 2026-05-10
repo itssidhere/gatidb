@@ -53,8 +53,8 @@ void write_u64(Page& page, std::size_t offset, std::uint64_t value) {
 
 std::uint16_t read_u16(const Page& page, std::size_t& offset) {
     ensure_capacity(offset, 2);
-    std::uint16_t value = static_cast<std::uint16_t>(page[offset])
-        | (static_cast<std::uint16_t>(page[offset + 1]) << 8);
+    std::uint16_t value =
+        static_cast<std::uint16_t>(page[offset]) | (static_cast<std::uint16_t>(page[offset + 1]) << 8);
     offset += 2;
     return value;
 }
@@ -108,14 +108,48 @@ std::string upper_ascii(std::string value) {
     return value;
 }
 
+template <class... Ts> struct Overloaded : Ts... {
+    using Ts::operator()...;
+};
+
+template <class... Ts> Overloaded(Ts...) -> Overloaded<Ts...>;
+
+std::vector<std::string> column_names(const Schema& schema) {
+    std::vector<std::string> names;
+    names.reserve(schema.columns.size());
+    for (const auto& column : schema.columns) {
+        names.push_back(column.name);
+    }
+    return names;
+}
+
+void require_primary_key_filter(const Table& table, const sql::Filter& filter) {
+    const auto& schema = table.schema();
+    require(schema.primary_key < schema.columns.size(), "primary key index out of bounds");
+    const auto& primary_key = schema.columns.at(schema.primary_key);
+    require(filter.column == primary_key.name, "only primary-key WHERE filters are supported");
+}
+
+std::vector<std::vector<Value>> scan_between_inclusive(Table& table, std::int32_t start, std::int32_t end) {
+    if (start > end) {
+        return {};
+    }
+
+    if (end == std::numeric_limits<std::int32_t>::max()) {
+        auto rows = table.scan(start, end);
+        if (auto final_row = table.get_row(end)) {
+            rows.push_back(*final_row);
+        }
+        return rows;
+    }
+
+    return table.scan(start, end + 1);
+}
+
 } // namespace
 
-Page serialize_node(
-    bool is_leaf,
-    const std::vector<std::int32_t>& keys,
-    const std::vector<std::vector<std::uint8_t>>& values,
-    const std::vector<std::uint32_t>& children
-) {
+Page serialize_node(bool is_leaf, const std::vector<std::int32_t>& keys,
+                    const std::vector<std::vector<std::uint8_t>>& values, const std::vector<std::uint32_t>& children) {
     require(keys.size() == values.size(), "node keys and values must have the same length");
     require(keys.size() <= std::numeric_limits<std::uint16_t>::max(), "too many keys in node");
     if (is_leaf) {
@@ -165,8 +199,8 @@ Node deserialize_node(const Page& page) {
     node.values.reserve(num_keys);
     for (std::size_t i = 0; i < num_keys; ++i) {
         ensure_capacity(offset, VALUE_SIZE);
-        const std::uint16_t len = static_cast<std::uint16_t>(page[offset])
-            | (static_cast<std::uint16_t>(page[offset + 1]) << 8);
+        const std::uint16_t len =
+            static_cast<std::uint16_t>(page[offset]) | (static_cast<std::uint16_t>(page[offset + 1]) << 8);
         require(len <= VALUE_SIZE - 2, "corrupt node value length");
         std::vector<std::uint8_t> value(page.begin() + static_cast<std::ptrdiff_t>(offset + 2),
                                         page.begin() + static_cast<std::ptrdiff_t>(offset + 2 + len));
@@ -529,27 +563,27 @@ std::vector<std::uint8_t> Schema::encode_row(const std::vector<Value>& row) cons
         const auto& value = row[i];
 
         switch (column.data_type.kind) {
-            case DataTypeKind::Int: {
-                require(value.is_int(), "type mismatch: expected int");
-                const auto raw = static_cast<std::uint32_t>(value.as_int());
-                for (int b = 0; b < 4; ++b) {
-                    out.push_back(static_cast<std::uint8_t>((raw >> (b * 8)) & 0xff));
-                }
-                break;
+        case DataTypeKind::Int: {
+            require(value.is_int(), "type mismatch: expected int");
+            const auto raw = static_cast<std::uint32_t>(value.as_int());
+            for (int b = 0; b < 4; ++b) {
+                out.push_back(static_cast<std::uint8_t>((raw >> (b * 8)) & 0xff));
             }
-            case DataTypeKind::Varchar: {
-                require(std::holds_alternative<std::string>(value.data), "type mismatch: expected varchar");
-                const auto& text = std::get<std::string>(value.data);
-                const auto len = std::min<std::size_t>(text.size(), column.data_type.max_length);
-                out.insert(out.end(), text.begin(), text.begin() + static_cast<std::ptrdiff_t>(len));
-                out.insert(out.end(), column.data_type.max_length - len, 0);
-                break;
-            }
-            case DataTypeKind::Bool: {
-                require(std::holds_alternative<bool>(value.data), "type mismatch: expected bool");
-                out.push_back(std::get<bool>(value.data) ? 1 : 0);
-                break;
-            }
+            break;
+        }
+        case DataTypeKind::Varchar: {
+            require(std::holds_alternative<std::string>(value.data), "type mismatch: expected varchar");
+            const auto& text = std::get<std::string>(value.data);
+            const auto len = std::min<std::size_t>(text.size(), column.data_type.max_length);
+            out.insert(out.end(), text.begin(), text.begin() + static_cast<std::ptrdiff_t>(len));
+            out.insert(out.end(), column.data_type.max_length - len, 0);
+            break;
+        }
+        case DataTypeKind::Bool: {
+            require(std::holds_alternative<bool>(value.data), "type mismatch: expected bool");
+            out.push_back(std::get<bool>(value.data) ? 1 : 0);
+            break;
+        }
         }
     }
 
@@ -562,34 +596,34 @@ std::vector<Value> Schema::decode_row(const std::vector<std::uint8_t>& data) con
 
     for (const auto& column : columns) {
         switch (column.data_type.kind) {
-            case DataTypeKind::Int: {
-                require(offset + 4 <= data.size(), "encoded row is truncated");
-                std::uint32_t raw = 0;
-                for (int b = 0; b < 4; ++b) {
-                    raw |= static_cast<std::uint32_t>(data[offset + static_cast<std::size_t>(b)]) << (b * 8);
-                }
-                row.push_back(Value::Int(static_cast<std::int32_t>(raw)));
-                offset += 4;
-                break;
+        case DataTypeKind::Int: {
+            require(offset + 4 <= data.size(), "encoded row is truncated");
+            std::uint32_t raw = 0;
+            for (int b = 0; b < 4; ++b) {
+                raw |= static_cast<std::uint32_t>(data[offset + static_cast<std::size_t>(b)]) << (b * 8);
             }
-            case DataTypeKind::Varchar: {
-                const std::size_t max_len = column.data_type.max_length;
-                require(offset + max_len <= data.size(), "encoded row is truncated");
-                std::size_t end = 0;
-                while (end < max_len && data[offset + end] != 0) {
-                    ++end;
-                }
-                row.push_back(Value::Varchar(std::string(data.begin() + static_cast<std::ptrdiff_t>(offset),
-                                                        data.begin() + static_cast<std::ptrdiff_t>(offset + end))));
-                offset += max_len;
-                break;
+            row.push_back(Value::Int(static_cast<std::int32_t>(raw)));
+            offset += 4;
+            break;
+        }
+        case DataTypeKind::Varchar: {
+            const std::size_t max_len = column.data_type.max_length;
+            require(offset + max_len <= data.size(), "encoded row is truncated");
+            std::size_t end = 0;
+            while (end < max_len && data[offset + end] != 0) {
+                ++end;
             }
-            case DataTypeKind::Bool: {
-                require(offset + 1 <= data.size(), "encoded row is truncated");
-                row.push_back(Value::Bool(data[offset] != 0));
-                ++offset;
-                break;
-            }
+            row.push_back(Value::Varchar(std::string(data.begin() + static_cast<std::ptrdiff_t>(offset),
+                                                     data.begin() + static_cast<std::ptrdiff_t>(offset + end))));
+            offset += max_len;
+            break;
+        }
+        case DataTypeKind::Bool: {
+            require(offset + 1 <= data.size(), "encoded row is truncated");
+            row.push_back(Value::Bool(data[offset] != 0));
+            ++offset;
+            break;
+        }
         }
     }
 
@@ -602,12 +636,9 @@ DiskBtree::DiskBtree(std::shared_ptr<BufferPool> pool, std::size_t degree)
     pool_->write_page(root_page_id_, serialize_node(true, {}, {}, {}));
 }
 
-DiskBtree::DiskBtree(
-    std::shared_ptr<BufferPool> pool,
-    std::uint32_t root_page_id,
-    std::uint32_t next_page_id,
-    std::size_t degree
-) : pool_(std::move(pool)), root_page_id_(root_page_id), next_page_id_(next_page_id), degree_(degree) {
+DiskBtree::DiskBtree(std::shared_ptr<BufferPool> pool, std::uint32_t root_page_id, std::uint32_t next_page_id,
+                     std::size_t degree)
+    : pool_(std::move(pool)), root_page_id_(root_page_id), next_page_id_(next_page_id), degree_(degree) {
     require(degree_ >= 2, "B-tree degree must be at least 2");
 }
 
@@ -722,9 +753,11 @@ void DiskBtree::split_child(std::uint32_t parent_id, std::size_t idx) {
     const std::size_t mid = degree_ - 1;
 
     std::vector<std::int32_t> left_keys(child.keys.begin(), child.keys.begin() + static_cast<std::ptrdiff_t>(mid));
-    std::vector<std::vector<std::uint8_t>> left_values(child.values.begin(), child.values.begin() + static_cast<std::ptrdiff_t>(mid));
+    std::vector<std::vector<std::uint8_t>> left_values(child.values.begin(),
+                                                       child.values.begin() + static_cast<std::ptrdiff_t>(mid));
     std::vector<std::int32_t> right_keys(child.keys.begin() + static_cast<std::ptrdiff_t>(mid + 1), child.keys.end());
-    std::vector<std::vector<std::uint8_t>> right_values(child.values.begin() + static_cast<std::ptrdiff_t>(mid + 1), child.values.end());
+    std::vector<std::vector<std::uint8_t>> right_values(child.values.begin() + static_cast<std::ptrdiff_t>(mid + 1),
+                                                        child.values.end());
 
     std::vector<std::uint32_t> left_children;
     std::vector<std::uint32_t> right_children;
@@ -916,12 +949,8 @@ void DiskBtree::borrow_from_next(std::uint32_t parent_id, std::size_t idx) {
     pool_->write_page(sibling_id, serialize_node(sibling.is_leaf, sibling.keys, sibling.values, sibling.children));
 }
 
-void DiskBtree::scan_node(
-    std::uint32_t page_id,
-    std::int32_t start,
-    std::int32_t end,
-    std::vector<std::pair<std::int32_t, std::vector<std::uint8_t>>>& out
-) {
+void DiskBtree::scan_node(std::uint32_t page_id, std::int32_t start, std::int32_t end,
+                          std::vector<std::pair<std::int32_t, std::vector<std::uint8_t>>>& out) {
     Node node = deserialize_node(pool_->get_page(page_id));
 
     if (node.is_leaf) {
@@ -961,16 +990,9 @@ std::uint32_t DiskBtree::allocate_page() {
 Table::Table(std::string name, Schema schema, std::shared_ptr<BufferPool> pool, std::size_t degree)
     : name_(std::move(name)), schema_(std::move(schema)), tree_(std::move(pool), degree) {}
 
-Table::Table(
-    std::string name,
-    Schema schema,
-    std::shared_ptr<BufferPool> pool,
-    std::uint32_t root_page_id,
-    std::uint32_t next_page_id,
-    std::size_t degree
-) : name_(std::move(name)),
-    schema_(std::move(schema)),
-    tree_(std::move(pool), root_page_id, next_page_id, degree) {}
+Table::Table(std::string name, Schema schema, std::shared_ptr<BufferPool> pool, std::uint32_t root_page_id,
+             std::uint32_t next_page_id, std::size_t degree)
+    : name_(std::move(name)), schema_(std::move(schema)), tree_(std::move(pool), root_page_id, next_page_id, degree) {}
 
 const std::string& Table::name() const {
     return name_;
@@ -1008,6 +1030,15 @@ std::vector<std::vector<Value>> Table::scan(std::int32_t start, std::int32_t end
     return rows;
 }
 
+std::vector<std::vector<Value>> Table::scan_all() {
+    std::vector<std::vector<Value>> rows;
+    for (auto& [key, encoded] : tree_.scan_all()) {
+        (void)key;
+        rows.push_back(schema_.decode_row(encoded));
+    }
+    return rows;
+}
+
 std::uint32_t Table::next_page_id() const {
     return tree_.next_page_id();
 }
@@ -1035,9 +1066,7 @@ void Catalog::create_table(const std::string& name, Schema schema, std::size_t d
 }
 
 const TableMeta* Catalog::get_table_meta(const std::string& name) const {
-    auto it = std::find_if(tables_.begin(), tables_.end(), [&](const TableMeta& meta) {
-        return meta.name == name;
-    });
+    auto it = std::find_if(tables_.begin(), tables_.end(), [&](const TableMeta& meta) { return meta.name == name; });
     return it == tables_.end() ? nullptr : &*it;
 }
 
@@ -1099,18 +1128,18 @@ Page Catalog::serialize_catalog(const std::vector<TableMeta>& tables, std::uint3
 
             ensure_capacity(offset, 1);
             switch (column.data_type.kind) {
-                case DataTypeKind::Int:
-                    page[offset++] = 0;
-                    write_u32(page, offset, 0);
-                    break;
-                case DataTypeKind::Varchar:
-                    page[offset++] = 1;
-                    write_u32(page, offset, static_cast<std::uint32_t>(column.data_type.max_length));
-                    break;
-                case DataTypeKind::Bool:
-                    page[offset++] = 2;
-                    write_u32(page, offset, 0);
-                    break;
+            case DataTypeKind::Int:
+                page[offset++] = 0;
+                write_u32(page, offset, 0);
+                break;
+            case DataTypeKind::Varchar:
+                page[offset++] = 1;
+                write_u32(page, offset, static_cast<std::uint32_t>(column.data_type.max_length));
+                break;
+            case DataTypeKind::Bool:
+                page[offset++] = 2;
+                write_u32(page, offset, 0);
+                break;
             }
         }
     }
@@ -1174,8 +1203,90 @@ std::pair<std::vector<TableMeta>, std::uint32_t> Catalog::deserialize_catalog(co
     return {tables, next_page_id};
 }
 
-namespace sql {
+Database::Database(std::string db_file, std::string wal_file, std::size_t buffer_pages,
+                   std::size_t default_btree_degree)
+    : catalog_(BufferPool(DiskManager(std::move(db_file)), Wal(std::move(wal_file)), buffer_pages)),
+      default_btree_degree_(default_btree_degree) {
+    require(default_btree_degree >= 2, "default B-tree degree must at least be 2");
+};
 
+SqlResult Database::execute(const std::string& source) {
+    sql::Statement statement = sql::parse(sql::tokenize(source));
+
+    return std::visit(Overloaded([&](const sql::CreateTable& create) { return execute_create(create); },
+                                 [&](const sql::Insert& insert) { return execute_insert(insert); },
+                                 [&](const sql::Select& select) { return execute_select(select); }
+
+                                 ),
+                      statement);
+}
+
+void Database::flush() {
+    catalog_.flush();
+}
+
+SqlResult Database::execute_create(const sql::CreateTable& statement) {
+    std::vector<Column> columns;
+    columns.reserve(statement.columns.size());
+
+    for (const auto& column : statement.columns) {
+        columns.push_back(Column(column.name, column.data_type));
+    }
+
+    catalog_.create_table(statement.name, Schema(std::move(columns), statement.primary_key), default_btree_degree_);
+
+    catalog_.flush();
+    return SqlResult();
+}
+
+SqlResult Database::execute_insert(const sql::Insert& statement) {
+    auto table = catalog_.get_table(statement.table);
+    require(table.has_value(), "table not found: " + statement.table);
+
+    table->insert_row(statement.values);
+    catalog_.update_table_storage(*table);
+    catalog_.flush();
+
+    SqlResult result;
+    result.rows_affected = 1;
+    return result;
+}
+
+SqlResult Database::execute_select(const sql::Select& statement) {
+    auto table = catalog_.get_table(statement.table);
+    require(table.has_value(), "table not found: " + statement.table);
+
+    SqlResult result;
+    result.columns = column_names(table->schema());
+
+    switch (statement.filter.kind) {
+    case sql::FilterKind::None:
+        result.rows = table->scan_all();
+        break;
+
+    case sql::FilterKind::Eq: {
+        require_primary_key_filter(*table, statement.filter);
+        require(statement.filter.left.is_int(), "primary key equality filter must use an int");
+
+        if (auto row = table->get_row(statement.filter.left.as_int())) {
+            result.rows.push_back(*row);
+        }
+        break;
+    }
+    case sql::FilterKind::Between: {
+        require_primary_key_filter(*table, statement.filter);
+        require(statement.filter.left.is_int(), "primary-key range start must use an int");
+        require(statement.filter.right.is_int(), "primary-key range end must use an int");
+        result.rows = scan_between_inclusive(*table, statement.filter.left.as_int(), statement.filter.right.as_int());
+        break;
+    }
+
+    default:
+        break;
+    }
+    return result;
+}
+namespace sql {
 bool Token::operator==(TokenKind expected) const {
     return kind == expected;
 }
@@ -1184,9 +1295,7 @@ std::vector<Token> tokenize(const std::string& source) {
     std::vector<Token> tokens;
     std::size_t i = 0;
 
-    auto push = [&](TokenKind kind) {
-        tokens.push_back(Token{kind, {}, 0});
-    };
+    auto push = [&](TokenKind kind) { tokens.push_back(Token{kind, {}, 0}); };
 
     while (i < source.size()) {
         const char ch = source[i];
@@ -1196,46 +1305,47 @@ std::vector<Token> tokenize(const std::string& source) {
         }
 
         switch (ch) {
-            case '(':
-                push(TokenKind::LParen);
-                ++i;
-                continue;
-            case ')':
-                push(TokenKind::RParen);
-                ++i;
-                continue;
-            case ',':
-                push(TokenKind::Comma);
-                ++i;
-                continue;
-            case ';':
-                push(TokenKind::Semicolon);
-                ++i;
-                continue;
-            case '*':
-                push(TokenKind::Star);
-                ++i;
-                continue;
-            case '=':
-                push(TokenKind::Eq);
-                ++i;
-                continue;
-            case '\'': {
-                ++i;
-                std::string text;
-                while (i < source.size() && source[i] != '\'') {
-                    text.push_back(source[i++]);
-                }
-                require(i < source.size(), "unterminated string literal");
-                ++i;
-                tokens.push_back(Token{TokenKind::StrLit, std::move(text), 0});
-                continue;
+        case '(':
+            push(TokenKind::LParen);
+            ++i;
+            continue;
+        case ')':
+            push(TokenKind::RParen);
+            ++i;
+            continue;
+        case ',':
+            push(TokenKind::Comma);
+            ++i;
+            continue;
+        case ';':
+            push(TokenKind::Semicolon);
+            ++i;
+            continue;
+        case '*':
+            push(TokenKind::Star);
+            ++i;
+            continue;
+        case '=':
+            push(TokenKind::Eq);
+            ++i;
+            continue;
+        case '\'': {
+            ++i;
+            std::string text;
+            while (i < source.size() && source[i] != '\'') {
+                text.push_back(source[i++]);
             }
-            default:
-                break;
+            require(i < source.size(), "unterminated string literal");
+            ++i;
+            tokens.push_back(Token{TokenKind::StrLit, std::move(text), 0});
+            continue;
+        }
+        default:
+            break;
         }
 
-        const bool negative_int = ch == '-' && i + 1 < source.size() && std::isdigit(static_cast<unsigned char>(source[i + 1]));
+        const bool negative_int =
+            ch == '-' && i + 1 < source.size() && std::isdigit(static_cast<unsigned char>(source[i + 1]));
         if (std::isdigit(static_cast<unsigned char>(ch)) || negative_int) {
             const std::size_t start = i;
             if (source[i] == '-') {
@@ -1251,23 +1361,19 @@ std::vector<Token> tokenize(const std::string& source) {
 
         if (std::isalpha(static_cast<unsigned char>(ch)) || ch == '_') {
             const std::size_t start = i;
-            while (i < source.size()
-                && (std::isalnum(static_cast<unsigned char>(source[i])) || source[i] == '_')) {
+            while (i < source.size() && (std::isalnum(static_cast<unsigned char>(source[i])) || source[i] == '_')) {
                 ++i;
             }
 
             std::string text = source.substr(start, i - start);
             const std::string keyword = upper_ascii(text);
             static const std::unordered_map<std::string, TokenKind> keywords = {
-                {"CREATE", TokenKind::Create}, {"TABLE", TokenKind::Table},
-                {"INSERT", TokenKind::Insert}, {"INTO", TokenKind::Into},
-                {"VALUES", TokenKind::Values}, {"SELECT", TokenKind::Select},
-                {"FROM", TokenKind::From}, {"WHERE", TokenKind::Where},
-                {"BETWEEN", TokenKind::Between}, {"AND", TokenKind::And},
-                {"INT", TokenKind::Int}, {"VARCHAR", TokenKind::Varchar},
-                {"BOOL", TokenKind::Bool}, {"PRIMARY", TokenKind::Primary},
-                {"KEY", TokenKind::Key}, {"TRUE", TokenKind::True},
-                {"FALSE", TokenKind::False},
+                {"CREATE", TokenKind::Create}, {"TABLE", TokenKind::Table},     {"INSERT", TokenKind::Insert},
+                {"INTO", TokenKind::Into},     {"VALUES", TokenKind::Values},   {"SELECT", TokenKind::Select},
+                {"FROM", TokenKind::From},     {"WHERE", TokenKind::Where},     {"BETWEEN", TokenKind::Between},
+                {"AND", TokenKind::And},       {"INT", TokenKind::Int},         {"VARCHAR", TokenKind::Varchar},
+                {"BOOL", TokenKind::Bool},     {"PRIMARY", TokenKind::Primary}, {"KEY", TokenKind::Key},
+                {"TRUE", TokenKind::True},     {"FALSE", TokenKind::False},
             };
 
             auto found = keywords.find(keyword);
@@ -1287,7 +1393,7 @@ std::vector<Token> tokenize(const std::string& source) {
 }
 
 class Parser {
-public:
+  public:
     explicit Parser(std::vector<Token> tokens) : tokens_(std::move(tokens)) {}
 
     Statement parse() {
@@ -1301,7 +1407,7 @@ public:
         return statement;
     }
 
-private:
+  private:
     const Token& peek() const {
         require(pos_ < tokens_.size(), "parser advanced past end");
         return tokens_[pos_];
@@ -1331,14 +1437,14 @@ private:
 
     Statement parse_statement() {
         switch (peek().kind) {
-            case TokenKind::Create:
-                return parse_create();
-            case TokenKind::Insert:
-                return parse_insert();
-            case TokenKind::Select:
-                return parse_select();
-            default:
-                fail("expected SQL statement");
+        case TokenKind::Create:
+            return parse_create();
+        case TokenKind::Insert:
+            return parse_insert();
+        case TokenKind::Select:
+            return parse_select();
+        default:
+            fail("expected SQL statement");
         }
     }
 
@@ -1383,21 +1489,21 @@ private:
 
     DataType parse_type() {
         switch (advance().kind) {
-            case TokenKind::Int:
-                return DataType::Int();
-            case TokenKind::Bool:
-                return DataType::Bool();
-            case TokenKind::Varchar: {
-                expect(TokenKind::LParen);
-                if (peek().kind != TokenKind::IntLit) {
-                    fail("expected varchar length");
-                }
-                const auto max_len = static_cast<std::size_t>(advance().int_value);
-                expect(TokenKind::RParen);
-                return DataType::Varchar(max_len);
+        case TokenKind::Int:
+            return DataType::Int();
+        case TokenKind::Bool:
+            return DataType::Bool();
+        case TokenKind::Varchar: {
+            expect(TokenKind::LParen);
+            if (peek().kind != TokenKind::IntLit) {
+                fail("expected varchar length");
             }
-            default:
-                fail("expected column type");
+            const auto max_len = static_cast<std::size_t>(advance().int_value);
+            expect(TokenKind::RParen);
+            return DataType::Varchar(max_len);
+        }
+        default:
+            fail("expected column type");
         }
     }
 
@@ -1452,18 +1558,18 @@ private:
 
     Value parse_value() {
         switch (peek().kind) {
-            case TokenKind::IntLit:
-                return Value::Int(advance().int_value);
-            case TokenKind::StrLit:
-                return Value::Varchar(advance().text);
-            case TokenKind::True:
-                advance();
-                return Value::Bool(true);
-            case TokenKind::False:
-                advance();
-                return Value::Bool(false);
-            default:
-                fail("expected SQL value");
+        case TokenKind::IntLit:
+            return Value::Int(advance().int_value);
+        case TokenKind::StrLit:
+            return Value::Varchar(advance().text);
+        case TokenKind::True:
+            advance();
+            return Value::Bool(true);
+        case TokenKind::False:
+            advance();
+            return Value::Bool(false);
+        default:
+            fail("expected SQL value");
         }
     }
 

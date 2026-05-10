@@ -40,18 +40,14 @@ struct Node {
     std::vector<std::uint32_t> children;
 };
 
-Page serialize_node(
-    bool is_leaf,
-    const std::vector<std::int32_t>& keys,
-    const std::vector<std::vector<std::uint8_t>>& values,
-    const std::vector<std::uint32_t>& children
-);
+Page serialize_node(bool is_leaf, const std::vector<std::int32_t>& keys,
+                    const std::vector<std::vector<std::uint8_t>>& values, const std::vector<std::uint32_t>& children);
 Node deserialize_node(const Page& page);
 std::uint64_t get_page_lsn(const Page& page);
 void set_page_lsn(Page& page, std::uint64_t lsn);
 
 class DiskManager {
-public:
+  public:
     explicit DiskManager(std::string filename);
     DiskManager(DiskManager&& other) noexcept;
     DiskManager& operator=(DiskManager&& other) noexcept;
@@ -63,7 +59,7 @@ public:
     void write_page(std::uint32_t page_id, const Page& data);
     void flush();
 
-private:
+  private:
     std::string filename_;
     std::fstream file_;
 };
@@ -80,7 +76,7 @@ struct WalRecord {
 class BufferPool;
 
 class Wal {
-public:
+  public:
     explicit Wal(std::string filename);
     Wal(Wal&& other) noexcept;
     Wal& operator=(Wal&& other) noexcept;
@@ -100,7 +96,7 @@ public:
     static void write_checkpoint_lsn(const std::string& filename, std::uint64_t lsn);
     static std::uint64_t read_checkpoint_lsn(const std::string& filename);
 
-private:
+  private:
     std::string filename_;
     std::fstream file_;
     std::uint64_t current_lsn_ = 0;
@@ -108,7 +104,7 @@ private:
 };
 
 class BufferPool {
-public:
+  public:
     BufferPool(DiskManager disk, Wal wal, std::size_t capacity);
 
     const Page& get_page(std::uint32_t page_id);
@@ -120,7 +116,7 @@ public:
     bool contains_page(std::uint32_t page_id) const;
     bool dirty_empty() const;
 
-private:
+  private:
     void touch(std::uint32_t page_id);
     void evict();
 
@@ -180,14 +176,10 @@ struct Schema {
 };
 
 class DiskBtree {
-public:
+  public:
     DiskBtree(std::shared_ptr<BufferPool> pool, std::size_t degree);
-    DiskBtree(
-        std::shared_ptr<BufferPool> pool,
-        std::uint32_t root_page_id,
-        std::uint32_t next_page_id,
-        std::size_t degree
-    );
+    DiskBtree(std::shared_ptr<BufferPool> pool, std::uint32_t root_page_id, std::uint32_t next_page_id,
+              std::size_t degree);
 
     std::uint32_t next_page_id() const;
     std::uint32_t root_page_id() const;
@@ -198,7 +190,7 @@ public:
     std::vector<std::pair<std::int32_t, std::vector<std::uint8_t>>> scan_all();
     void flush();
 
-private:
+  private:
     std::optional<std::vector<std::uint8_t>> search_node(std::uint32_t page_id, std::int32_t key);
     void insert_non_full(std::uint32_t page_id, std::int32_t key, std::vector<std::uint8_t> value);
     void split_child(std::uint32_t parent_id, std::size_t idx);
@@ -209,7 +201,8 @@ private:
     void fill(std::uint32_t parent_id, std::size_t idx);
     void borrow_from_prev(std::uint32_t parent_id, std::size_t idx);
     void borrow_from_next(std::uint32_t parent_id, std::size_t idx);
-    void scan_node(std::uint32_t page_id, std::int32_t start, std::int32_t end, std::vector<std::pair<std::int32_t, std::vector<std::uint8_t>>>& out);
+    void scan_node(std::uint32_t page_id, std::int32_t start, std::int32_t end,
+                   std::vector<std::pair<std::int32_t, std::vector<std::uint8_t>>>& out);
     std::uint32_t allocate_page();
 
     std::shared_ptr<BufferPool> pool_;
@@ -219,16 +212,10 @@ private:
 };
 
 class Table {
-public:
+  public:
     Table(std::string name, Schema schema, std::shared_ptr<BufferPool> pool, std::size_t degree);
-    Table(
-        std::string name,
-        Schema schema,
-        std::shared_ptr<BufferPool> pool,
-        std::uint32_t root_page_id,
-        std::uint32_t next_page_id,
-        std::size_t degree
-    );
+    Table(std::string name, Schema schema, std::shared_ptr<BufferPool> pool, std::uint32_t root_page_id,
+          std::uint32_t next_page_id, std::size_t degree);
 
     const std::string& name() const;
     const Schema& schema() const;
@@ -236,11 +223,12 @@ public:
     std::optional<std::vector<Value>> get_row(std::int32_t pk);
     void delete_row(std::int32_t pk);
     std::vector<std::vector<Value>> scan(std::int32_t start, std::int32_t end);
+    std::vector<std::vector<Value>> scan_all();
     std::uint32_t next_page_id() const;
     std::uint32_t root_page_id() const;
     void flush();
 
-private:
+  private:
     std::string name_;
     Schema schema_;
     DiskBtree tree_;
@@ -254,7 +242,7 @@ struct TableMeta {
 };
 
 class Catalog {
-public:
+  public:
     explicit Catalog(BufferPool pool);
 
     void create_table(const std::string& name, Schema schema, std::size_t degree);
@@ -267,7 +255,7 @@ public:
     static Page serialize_catalog(const std::vector<TableMeta>& tables, std::uint32_t next_page_id);
     static std::pair<std::vector<TableMeta>, std::uint32_t> deserialize_catalog(const Page& page);
 
-private:
+  private:
     std::shared_ptr<BufferPool> pool_;
     std::vector<TableMeta> tables_;
     std::uint32_t next_page_id_ = 1;
@@ -353,5 +341,26 @@ std::vector<Token> tokenize(const std::string& source);
 Statement parse(std::vector<Token> tokens);
 
 } // namespace sql
+struct SqlResult {
+    std::vector<std::string> columns;
+    std::vector<std::vector<Value>> rows;
+    std::size_t rows_affected = 0;
+};
 
+class Database {
+  public:
+    Database(std::string db_file, std::string wal_file, std::size_t buffer_pages = 64,
+             std::size_t default_btree_degree = 3);
+
+    SqlResult execute(const std::string& source);
+    void flush();
+
+  private:
+    SqlResult execute_create(const sql::CreateTable& statement);
+    SqlResult execute_insert(const sql::Insert& statement);
+    SqlResult execute_select(const sql::Select& statement);
+
+    Catalog catalog_;
+    std::size_t default_btree_degree_ = 3;
+};
 } // namespace gatidb

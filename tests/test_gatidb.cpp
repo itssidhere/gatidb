@@ -239,6 +239,49 @@ void test_sql_tokenizer_and_parser() {
     CHECK(select_stmt.filter.right == Value::Int(20));
 }
 
+void test_database_execute_sql() {
+    const std::string db = "cpp_test_database.db";
+    const std::string wal_file = "cpp_test_database.wal";
+    cleanup({db, wal_file});
+
+    {
+        Database database(db, wal_file);
+        database.execute("CREATE TABLE jobs (id INT PRIMARY KEY, title VARCHAR(64), done BOOL);");
+
+        auto insert = database.execute("INSERT INTO jobs VALUES (1, 'fix bug', false);");
+        CHECK(insert.rows_affected == 1);
+
+        database.execute("INSERT INTO jobs VALUES (2, 'write test', true);");
+        database.execute("INSERT INTO jobs VALUES (3, 'ship it', false);");
+
+        auto by_id = database.execute("SELECT * FROM jobs WHERE id = 2;");
+        CHECK((by_id.columns == std::vector<std::string>{"id", "title", "done"}));
+        CHECK(by_id.rows.size() == 1);
+        CHECK(by_id.rows[0][0] == Value::Int(2));
+        CHECK(by_id.rows[0][1] == Value::Varchar("write test"));
+        CHECK(by_id.rows[0][2] == Value::Bool(true));
+
+        auto range = database.execute("SELECT * FROM jobs WHERE id BETWEEN 1 AND 2;");
+        CHECK(range.rows.size() == 2);
+        CHECK(range.rows[0][0] == Value::Int(1));
+        CHECK(range.rows[1][0] == Value::Int(2));
+
+        auto all = database.execute("SELECT * FROM jobs;");
+        CHECK(all.rows.size() == 3);
+
+        database.flush();
+    }
+
+    {
+        Database database(db, wal_file);
+        auto persisted = database.execute("SELECT * FROM jobs WHERE id = 3;");
+        CHECK(persisted.rows.size() == 1);
+        CHECK(persisted.rows[0][1] == Value::Varchar("ship it"));
+    }
+
+    cleanup({db, wal_file});
+}
+
 } // namespace
 
 int main() {
@@ -250,6 +293,7 @@ int main() {
         {"btree_insert_search_scan_delete", test_btree_insert_search_scan_delete},
         {"schema_table_and_catalog_persistence", test_schema_table_and_catalog_persistence},
         {"sql_tokenizer_and_parser", test_sql_tokenizer_and_parser},
+        {"database_execute_sql", test_database_execute_sql},
     };
 
     for (const auto& [name, test] : tests) {
