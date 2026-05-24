@@ -184,6 +184,36 @@ void test_insert_greater_than_root_separator_after_split() {
           "key greater than all separators should be inserted into rightmost child");
 }
 
+void test_many_ascending_inserts_split_child_and_keep_all_keys() {
+    const std::string test_name = "many ascending inserts split child and keep all keys";
+
+    gatidb::Btree tree;
+    for (int key = 0; key < 20; ++key) {
+        tree.insert(key, key * 10);
+    }
+
+    check(tree.root_ != nullptr, test_name, "root should exist");
+    if (!tree.root_) {
+        return;
+    }
+
+    std::vector<int> keys;
+    collect_keys(tree.root_.get(), keys);
+    std::sort(keys.begin(), keys.end());
+
+    std::vector<int> expected;
+    for (int key = 0; key < 20; ++key) {
+        expected.push_back(key);
+    }
+
+    check(keys == expected, test_name, "all keys 0 through 19 should remain in the tree");
+
+    for (const auto& child : tree.root_->children) {
+        check(child->keys.size() <= gatidb::MAX_KEYS, test_name,
+              "no root child should contain more than MAX_KEYS keys");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -194,6 +224,7 @@ int main() {
     test_root_split_shape_after_overflow_insert();
     test_inserting_existing_separator_does_not_duplicate_key();
     test_insert_greater_than_root_separator_after_split();
+    test_many_ascending_inserts_split_child_and_keep_all_keys();
 
     if (failures != 0) {
         std::cerr << failures << " test assertion(s) failed\n";
