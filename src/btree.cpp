@@ -12,6 +12,9 @@ void Btree::insert(int key, int value) {
     }
 
     if (root_->keys.size() == MAX_KEYS) {
+        // we follow the convention of splitting before descending to next node because if a split
+        // is needed in the child node we will have to propogate the changes back until the parent
+        // is not overflowing. this can be a waste of memory and time
         split_root();
     }
 
@@ -20,11 +23,17 @@ void Btree::insert(int key, int value) {
     while (current->is_leaf != true) {
         auto it = std::lower_bound(current->keys.begin(), current->keys.end(), key);
         const auto index = static_cast<std::size_t>(it - current->keys.begin());
-        current = current->children[index].get();
+        if (it != current->keys.end() && current->keys[index] == key) {
+            // duplicate key. for now we will not do anything later we will update the value
+            return;
+        }
+        auto nxt = current->children[index].get();
 
-        if (current->keys.size() == MAX_KEYS) {
+        if (nxt->keys.size() == MAX_KEYS) {
             split_child(current);
         }
+
+        current = nxt;
     }
 
     auto it = std::lower_bound(current->keys.begin(), current->keys.end(), key);
@@ -75,5 +84,7 @@ void Btree::split_root() {
     root_->children.push_back(std::move(left));
     root_->children.push_back(std::move(right));
 }
-void Btree::split_child(Node* node) {}
+void Btree::split_child(Node* node) {
+    // unimplemented
+}
 } // namespace gatidb

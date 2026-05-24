@@ -166,6 +166,24 @@ void test_inserting_existing_separator_does_not_duplicate_key() {
     check(count == 1, test_name, "separator key should not also be inserted into a leaf");
 }
 
+void test_insert_greater_than_root_separator_after_split() {
+    const std::string test_name = "insert greater than root separator after split";
+
+    gatidb::Btree tree;
+    for (std::size_t i = 0; i <= gatidb::MAX_KEYS; ++i) {
+        tree.insert(static_cast<int>(i), static_cast<int>(i * 10));
+    }
+
+    tree.insert(100, 1000);
+
+    std::vector<int> keys;
+    collect_keys(tree.root_.get(), keys);
+    std::sort(keys.begin(), keys.end());
+
+    check(std::binary_search(keys.begin(), keys.end(), 100), test_name,
+          "key greater than all separators should be inserted into rightmost child");
+}
+
 } // namespace
 
 int main() {
@@ -175,6 +193,7 @@ int main() {
     test_insert_past_root_capacity_keeps_all_keys();
     test_root_split_shape_after_overflow_insert();
     test_inserting_existing_separator_does_not_duplicate_key();
+    test_insert_greater_than_root_separator_after_split();
 
     if (failures != 0) {
         std::cerr << failures << " test assertion(s) failed\n";
