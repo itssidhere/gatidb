@@ -1,8 +1,6 @@
 #pragma once
-
 #include <memory>
 #include <vector>
-
 namespace gatidb {
 constexpr std::size_t MAX_KEYS = 6;
 class Btree {
