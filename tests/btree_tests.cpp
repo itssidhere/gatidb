@@ -173,6 +173,24 @@ void test_duplicate_key_updates_value_in_leaf_after_root_split() {
     check(key_count == 1, test_name, "duplicate leaf key should not be inserted twice");
     check(value_it != left->values.end(), test_name, "duplicate leaf key should update value");
 }
+void test_find_returns_values_and_missing_sentinel() {
+    const std::string test_name = "find returns values and nullopt for missing keys";
+    gatidb::Btree empty_tree;
+    check(!empty_tree.find(1).has_value(), test_name, "empty tree lookup should return nullopt");
+    gatidb::Btree tree;
+    for (int key = 0; key < 20; ++key) {
+        tree.insert(key, key * 10);
+    }
+    tree.insert(1, 999);
+    tree.insert(18, 1800);
+    check(tree.find(0) == 0, test_name, "should find leftmost key");
+    check(tree.find(1) == 999, test_name, "should find updated key in child leaf");
+    check(tree.find(3) == 30, test_name, "should find promoted/internal key");
+    check(tree.find(18) == 1800, test_name, "should find updated key in right child");
+    check(tree.find(19) == 190, test_name, "should find rightmost key");
+    check(!tree.find(-1).has_value(), test_name, "missing key below range should return nullopt");
+    check(!tree.find(100).has_value(), test_name, "missing key above range should return nullopt");
+}
 void test_insert_greater_than_root_separator_after_split() {
     const std::string test_name = "insert greater than root separator after split";
     gatidb::Btree tree;
@@ -220,6 +238,7 @@ int main() {
     test_duplicate_key_updates_value_in_leaf_root();
     test_duplicate_key_updates_value_in_promoted_root();
     test_duplicate_key_updates_value_in_leaf_after_root_split();
+    test_find_returns_values_and_missing_sentinel();
     test_insert_greater_than_root_separator_after_split();
     test_many_ascending_inserts_split_child_and_keep_all_keys();
     if (failures != 0) {

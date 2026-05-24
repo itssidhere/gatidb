@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <vector>
 namespace {
 template <typename Iter> Iter advance_by(Iter it, std::size_t offset) {
@@ -44,6 +45,21 @@ void Btree::insert(int key, int value) {
         current->keys.insert(advance_by(current->keys.begin(), index), key);
         current->values.insert(advance_by(current->values.begin(), index), value);
     }
+}
+std::optional<int> Btree::find(int key) const {
+    const Node* current = root_.get();
+    while (current) {
+        auto it = std::lower_bound(current->keys.begin(), current->keys.end(), key);
+        auto index = static_cast<std::size_t>(it - current->keys.begin());
+        if (it != current->keys.end() && current->keys[index] == key) {
+            return current->values[index];
+        }
+        if (current->is_leaf) {
+            break;
+        }
+        current = current->children[index].get();
+    }
+    return std::nullopt;
 }
 void Btree::split_root() {
     auto old_root = std::move(root_);

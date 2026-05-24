@@ -1,11 +1,13 @@
 #pragma once
 #include <memory>
+#include <optional>
 #include <vector>
 namespace gatidb {
 constexpr std::size_t MAX_KEYS = 6;
 class Btree {
   public:
     void insert(int key, int value);
+    std::optional<int> find(int key) const;
 
   private:
     struct Node {
