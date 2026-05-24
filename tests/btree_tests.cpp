@@ -166,6 +166,67 @@ void test_inserting_existing_separator_does_not_duplicate_key() {
     check(count == 1, test_name, "separator key should not also be inserted into a leaf");
 }
 
+void test_duplicate_key_updates_value_in_leaf_root() {
+    const std::string test_name = "duplicate key updates value in leaf root";
+
+    gatidb::Btree tree;
+    tree.insert(10, 100);
+    tree.insert(10, 999);
+
+    check(tree.root_ != nullptr, test_name, "root should exist");
+    if (!tree.root_) {
+        return;
+    }
+
+    check(tree.root_->keys == std::vector<int>{10}, test_name,
+          "duplicate key should not be inserted twice in a leaf root");
+    check(tree.root_->values == std::vector<int>{999}, test_name,
+          "duplicate key should update the existing leaf value");
+}
+
+void test_duplicate_key_updates_value_in_promoted_root() {
+    const std::string test_name = "duplicate key updates value in promoted root";
+
+    gatidb::Btree tree;
+    for (std::size_t i = 0; i <= gatidb::MAX_KEYS; ++i) {
+        tree.insert(static_cast<int>(i), static_cast<int>(i * 10));
+    }
+
+    check(tree.root_ != nullptr, test_name, "root should exist");
+    if (!tree.root_ || tree.root_->keys.empty()) {
+        return;
+    }
+
+    const int separator = tree.root_->keys[0];
+    tree.insert(separator, 999);
+
+    check(tree.root_->values[0] == 999, test_name,
+          "duplicate separator key should update the promoted root value");
+}
+
+void test_duplicate_key_updates_value_in_leaf_after_root_split() {
+    const std::string test_name = "duplicate key updates value in leaf after root split";
+
+    gatidb::Btree tree;
+    for (std::size_t i = 0; i <= gatidb::MAX_KEYS; ++i) {
+        tree.insert(static_cast<int>(i), static_cast<int>(i * 10));
+    }
+
+    tree.insert(1, 999);
+
+    check(tree.root_ != nullptr, test_name, "root should exist");
+    if (!tree.root_ || tree.root_->children.empty()) {
+        return;
+    }
+
+    const auto* left = tree.root_->children[0].get();
+    const auto value_it = std::find(left->values.begin(), left->values.end(), 999);
+    const auto key_count = std::count(left->keys.begin(), left->keys.end(), 1);
+
+    check(key_count == 1, test_name, "duplicate leaf key should not be inserted twice");
+    check(value_it != left->values.end(), test_name, "duplicate leaf key should update value");
+}
+
 void test_insert_greater_than_root_separator_after_split() {
     const std::string test_name = "insert greater than root separator after split";
 
@@ -223,6 +284,9 @@ int main() {
     test_insert_past_root_capacity_keeps_all_keys();
     test_root_split_shape_after_overflow_insert();
     test_inserting_existing_separator_does_not_duplicate_key();
+    test_duplicate_key_updates_value_in_leaf_root();
+    test_duplicate_key_updates_value_in_promoted_root();
+    test_duplicate_key_updates_value_in_leaf_after_root_split();
     test_insert_greater_than_root_separator_after_split();
     test_many_ascending_inserts_split_child_and_keep_all_keys();
 

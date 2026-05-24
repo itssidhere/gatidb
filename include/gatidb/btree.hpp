@@ -19,5 +19,6 @@ class Btree {
     std::unique_ptr<Node> root_;
     void split_root();
     void split_child(Node* parent, std::size_t child_index);
+    void update_value_at_node(Node* parent, std::size_t index, int value);
 };
 } // namespace gatidb
