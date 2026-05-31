@@ -16,6 +16,18 @@ class Btree {
         std::vector<int> values;
         std::vector<std::unique_ptr<Node>> children;
     };
+    struct Cursor {
+        Node* node = nullptr;
+        std::size_t index = 0;
+        bool found = false;
+    };
+    struct ConstCursor {
+        const Node* node = nullptr;
+        std::size_t index = 0;
+        bool found = false;
+    };
+    Cursor seek(int key);
+    ConstCursor seek(int key) const;
     std::unique_ptr<Node> root_;
     void split_root();
     void split_child(Node* parent, std::size_t child_index);

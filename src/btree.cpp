@@ -47,19 +47,41 @@ void Btree::insert(int key, int value) {
     }
 }
 std::optional<int> Btree::find(int key) const {
+    auto cursor = seek(key);
+    if (!cursor.found) {
+        return std::nullopt;
+    }
+    return cursor.node->values[cursor.index];
+}
+Btree::ConstCursor Btree::seek(int key) const {
     const Node* current = root_.get();
     while (current) {
         auto it = std::lower_bound(current->keys.begin(), current->keys.end(), key);
         auto index = static_cast<std::size_t>(it - current->keys.begin());
         if (it != current->keys.end() && current->keys[index] == key) {
-            return current->values[index];
+            return ConstCursor{current, index, true};
         }
         if (current->is_leaf) {
             break;
         }
         current = current->children[index].get();
     }
-    return std::nullopt;
+    return ConstCursor{};
+}
+Btree::Cursor Btree::seek(int key) {
+    Node* current = root_.get();
+    while (current) {
+        auto it = std::lower_bound(current->keys.begin(), current->keys.end(), key);
+        auto index = static_cast<std::size_t>(it - current->keys.begin());
+        if (it != current->keys.end() && current->keys[index] == key) {
+            return Cursor{current, index, true};
+        }
+        if (current->is_leaf) {
+            break;
+        }
+        current = current->children[index].get();
+    }
+    return Cursor{};
 }
 void Btree::split_root() {
     auto old_root = std::move(root_);
