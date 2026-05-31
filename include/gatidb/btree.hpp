@@ -3,11 +3,14 @@
 #include <optional>
 #include <vector>
 namespace gatidb {
-constexpr std::size_t MAX_KEYS = 6;
+constexpr std::size_t MIN_DEGREE = 4;
+constexpr std::size_t MAX_KEYS = 2 * MIN_DEGREE - 1;
+constexpr std::size_t MIN_KEYS = MIN_DEGREE - 1;
 class Btree {
   public:
     void insert(int key, int value);
     std::optional<int> find(int key) const;
+    void erase(int key);
 
   private:
     struct Node {
@@ -16,19 +19,20 @@ class Btree {
         std::vector<int> values;
         std::vector<std::unique_ptr<Node>> children;
     };
-    struct Cursor {
-        Node* node = nullptr;
+    template <typename NodeType> struct CursorBase {
+        NodeType* node = nullptr;
+        NodeType* parent = nullptr;
         std::size_t index = 0;
+        std::size_t child_index = 0;
         bool found = false;
     };
-    struct ConstCursor {
-        const Node* node = nullptr;
-        std::size_t index = 0;
-        bool found = false;
-    };
+    using Cursor = CursorBase<Node>;
+    using ConstCursor = CursorBase<const Node>;
+    std::unique_ptr<Node> root_;
     Cursor seek(int key);
     ConstCursor seek(int key) const;
-    std::unique_ptr<Node> root_;
+    template <typename NodeType, typename CursorType>
+    CursorType seek_impl(NodeType* root, int key) const;
     void split_root();
     void split_child(Node* parent, std::size_t child_index);
     void update_value_at_node(Node* parent, std::size_t index, int value);

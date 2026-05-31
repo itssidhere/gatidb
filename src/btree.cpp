@@ -53,35 +53,71 @@ std::optional<int> Btree::find(int key) const {
     }
     return cursor.node->values[cursor.index];
 }
-Btree::ConstCursor Btree::seek(int key) const {
-    const Node* current = root_.get();
-    while (current) {
-        auto it = std::lower_bound(current->keys.begin(), current->keys.end(), key);
-        auto index = static_cast<std::size_t>(it - current->keys.begin());
-        if (it != current->keys.end() && current->keys[index] == key) {
-            return ConstCursor{current, index, true};
-        }
-        if (current->is_leaf) {
-            break;
-        }
-        current = current->children[index].get();
+void Btree::erase(int key) {
+    auto cursor = seek(key);
+    if (!cursor.found || !cursor.node->is_leaf) {
+        return;
     }
-    return ConstCursor{};
+    // will deletion satisfy the invariant?
+    cursor.node->keys.erase(advance_by(cursor.node->keys.begin(), cursor.index));
+    cursor.node->values.erase(advance_by(cursor.node->values.begin(), cursor.index));
+    auto n = cursor.node->keys.size() - 1;
+    if (n <= MAX_KEYS && n >= MIN_KEYS) {
+        return;
+    } else {
+        // can i use my siblings?
+        // left borrow
+        if (cursor.child_index > 0 &&
+            cursor.parent->children[cursor.child_index - 1]->keys.size() > MIN_KEYS) {
+            // i can borrow one node from left child
+            auto last_index_of_left_sibling =
+                cursor.parent->children[cursor.child_index - 1]->keys.size() - 1;
+            auto sibling_key =
+                cursor.parent->children[cursor.child_index - 1]->keys[last_index_of_left_sibling];
+            auto sibling_value =
+                cursor.parent->children[cursor.child_index - 1]->values[last_index_of_left_sibling];
+            cursor.parent->children[cursor.child_index - 1]->keys.erase(
+                advance_by(cursor.parent->children[cursor.child_index - 1]->keys.begin(),
+                           last_index_of_left_sibling));
+            cursor.parent->children[cursor.child_index - 1]->values.erase(
+                advance_by(cursor.parent->children[cursor.child_index - 1]->values.begin(),
+                           last_index_of_left_sibling));
+            // get root node key and value at the index
+            auto root_key = cursor.parent->keys[cursor.child_index - 1];
+            auto root_value = cursor.parent->values[cursor.child_index - 1];
+            // put the sibling key and value in the root
+            cursor.parent->keys[cursor.child_index - 1] = sibling_key;
+            cursor.parent->values[cursor.child_index - 1] = sibling_value;
+            cursor.node->keys.insert(cursor.node->keys.begin(), root_key);
+            cursor.node->values.insert(cursor.node->values.begin(), root_value);
+        }
+    }
+}
+Btree::ConstCursor Btree::seek(int key) const {
+    return seek_impl<const Node, ConstCursor>(root_.get(), key);
 }
 Btree::Cursor Btree::seek(int key) {
-    Node* current = root_.get();
+    return seek_impl<Node, Cursor>(root_.get(), key);
+}
+template <typename NodeType, typename CursorType>
+CursorType Btree::seek_impl(NodeType* root, int key) const {
+    NodeType* current = root;
+    NodeType* parent = nullptr;
+    std::size_t child_index = 0;
     while (current) {
         auto it = std::lower_bound(current->keys.begin(), current->keys.end(), key);
         auto index = static_cast<std::size_t>(it - current->keys.begin());
         if (it != current->keys.end() && current->keys[index] == key) {
-            return Cursor{current, index, true};
+            return CursorType{current, parent, index, child_index, true};
         }
         if (current->is_leaf) {
             break;
         }
+        parent = current;
+        child_index = index;
         current = current->children[index].get();
     }
-    return Cursor{};
+    return CursorType{};
 }
 void Btree::split_root() {
     auto old_root = std::move(root_);

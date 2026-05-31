@@ -73,8 +73,12 @@ void test_insert_past_root_capacity_keeps_all_keys() {
     std::vector<int> keys;
     collect_keys(tree.root_.get(), keys);
     std::sort(keys.begin(), keys.end());
-    check(keys == std::vector<int>{0, 1, 2, 3, 4, 5, 6}, test_name,
-          "all inserted keys 0 through 6 should still exist after overflow insert");
+    std::vector<int> expected;
+    for (std::size_t i = 0; i <= gatidb::MAX_KEYS; ++i) {
+        expected.push_back(static_cast<int>(i));
+    }
+    check(keys == expected, test_name,
+          "all inserted keys through MAX_KEYS should still exist after overflow insert");
 }
 void test_root_split_shape_after_overflow_insert() {
     const std::string test_name = "root split shape after overflow insert";
@@ -191,6 +195,52 @@ void test_find_returns_values_and_missing_sentinel() {
     check(!tree.find(-1).has_value(), test_name, "missing key below range should return nullopt");
     check(!tree.find(100).has_value(), test_name, "missing key above range should return nullopt");
 }
+void test_erase_removes_key_from_leaf_root() {
+    const std::string test_name = "erase removes key from leaf root";
+    gatidb::Btree tree;
+    tree.insert(10, 100);
+    tree.insert(20, 200);
+    tree.insert(30, 300);
+    tree.erase(20);
+    check(!tree.find(20).has_value(), test_name, "erased key should not be found");
+    check(tree.find(10) == 100, test_name, "other keys should remain findable");
+    check(tree.find(30) == 300, test_name, "other keys should remain findable");
+}
+void test_erase_with_left_borrow_removes_target_and_preserves_order() {
+    const std::string test_name = "erase with left borrow removes target and preserves order";
+    gatidb::Btree tree;
+    for (int key = 0; key < 9; ++key) {
+        tree.insert(key, key * 10);
+    }
+    tree.insert(1, 111);
+    tree.erase(6);
+    check(!tree.find(6).has_value(), test_name, "erased key should not be found");
+    check(tree.find(1) == 111, test_name, "borrow should keep sibling values aligned");
+    std::vector<int> keys;
+    collect_keys(tree.root_.get(), keys);
+    std::sort(keys.begin(), keys.end());
+    check(keys == std::vector<int>{0, 1, 2, 3, 4, 5, 7, 8}, test_name,
+          "tree should contain all original keys except erased key");
+}
+void test_erase_with_left_borrow_preserves_search_ranges() {
+    const std::string test_name = "erase with left borrow preserves search ranges";
+    gatidb::Btree tree;
+    for (int key = 0; key <= static_cast<int>(gatidb::MAX_KEYS); ++key) {
+        tree.insert(key, key * 10);
+    }
+    tree.insert(-1, -10);
+    tree.erase(4);
+    tree.erase(5);
+    check(!tree.find(4).has_value(), test_name, "first erased key should not be found");
+    check(!tree.find(5).has_value(), test_name, "second erased key should not be found");
+    check(tree.find(-1) == -10, test_name, "borrow should preserve leftmost lookup");
+    check(tree.find(0) == 0, test_name, "borrow should preserve left sibling lookup");
+    check(tree.find(1) == 10, test_name, "borrow should preserve left sibling lookup");
+    check(tree.find(2) == 20, test_name, "borrowed key should remain findable");
+    check(tree.find(3) == 30, test_name, "parent separator key should remain findable");
+    check(tree.find(6) == 60, test_name, "right child lookup should remain findable");
+    check(tree.find(7) == 70, test_name, "right child lookup should remain findable");
+}
 void test_insert_greater_than_root_separator_after_split() {
     const std::string test_name = "insert greater than root separator after split";
     gatidb::Btree tree;
@@ -239,6 +289,9 @@ int main() {
     test_duplicate_key_updates_value_in_promoted_root();
     test_duplicate_key_updates_value_in_leaf_after_root_split();
     test_find_returns_values_and_missing_sentinel();
+    test_erase_removes_key_from_leaf_root();
+    test_erase_with_left_borrow_removes_target_and_preserves_order();
+    test_erase_with_left_borrow_preserves_search_ranges();
     test_insert_greater_than_root_separator_after_split();
     test_many_ascending_inserts_split_child_and_keep_all_keys();
     if (failures != 0) {
