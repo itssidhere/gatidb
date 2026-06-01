@@ -26,6 +26,7 @@ class Btree {
         std::size_t child_index = 0;
         bool found = false;
     };
+
     using Cursor = CursorBase<Node>;
     using ConstCursor = CursorBase<const Node>;
     std::unique_ptr<Node> root_;
@@ -36,5 +37,7 @@ class Btree {
     void split_root();
     void split_child(Node* parent, std::size_t child_index);
     void update_value_at_node(Node* parent, std::size_t index, int value);
+    void borrow_leaf_from_left(const Cursor& cursor);
+    void borrow_leaf_from_right(const Cursor& cursor);
 };
 } // namespace gatidb
