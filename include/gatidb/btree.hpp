@@ -19,12 +19,15 @@ class Btree {
         std::vector<int> values;
         std::vector<std::unique_ptr<Node>> children;
     };
+    template <typename NodeType> struct PathEntry {
+        NodeType* node;
+        std::size_t child_index;
+    };
     template <typename NodeType> struct CursorBase {
         NodeType* node = nullptr;
-        NodeType* parent = nullptr;
         std::size_t index = 0;
-        std::size_t child_index = 0;
         bool found = false;
+        std::vector<PathEntry<NodeType>> path;
     };
 
     using Cursor = CursorBase<Node>;
@@ -37,7 +40,8 @@ class Btree {
     void split_root();
     void split_child(Node* parent, std::size_t child_index);
     void update_value_at_node(Node* parent, std::size_t index, int value);
-    void borrow_leaf_from_left(const Cursor& cursor);
-    void borrow_leaf_from_right(const Cursor& cursor);
+    void borrow_leaf_from_left(Node& node, const std::vector<PathEntry<Node>>& path);
+    void borrow_leaf_from_right(Node& node, const std::vector<PathEntry<Node>>& path);
+    void repair_underflow(Node& node, std::vector<PathEntry<Node>> path);
 };
 } // namespace gatidb

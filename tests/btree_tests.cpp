@@ -2,6 +2,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 #define private public
 #include "gatidb/btree.hpp"
@@ -42,6 +43,50 @@ gatidb::Btree make_two_leaf_tree(std::vector<int> left_keys, int separator,
     tree.root_->values = {separator * 10};
     tree.root_->children.push_back(make_leaf(std::move(left_keys)));
     tree.root_->children.push_back(make_leaf(std::move(right_keys)));
+    return tree;
+}
+gatidb::Btree make_three_leaf_root_tree() {
+    gatidb::Btree tree;
+    tree.root_ = std::make_unique<gatidb::Btree::Node>();
+    tree.root_->is_leaf = false;
+    tree.root_->keys = {3, 7};
+    tree.root_->values = {30, 70};
+    tree.root_->children.push_back(make_leaf({0, 1, 2}));
+    tree.root_->children.push_back(make_leaf({4, 5, 6}));
+    tree.root_->children.push_back(make_leaf({8, 9, 10}));
+    return tree;
+}
+std::unique_ptr<gatidb::Btree::Node>
+make_internal(std::vector<int> keys, std::vector<std::unique_ptr<gatidb::Btree::Node>> children) {
+    auto node = std::make_unique<gatidb::Btree::Node>();
+    node->is_leaf = false;
+    node->keys = std::move(keys);
+    for (const int key : node->keys) {
+        node->values.push_back(key * 10);
+    }
+    node->children = std::move(children);
+    return node;
+}
+gatidb::Btree make_three_level_tree() {
+    std::vector<std::unique_ptr<gatidb::Btree::Node>> left_children;
+    left_children.push_back(make_leaf({1, 2, 3}));
+    left_children.push_back(make_leaf({21, 22, 23}));
+    left_children.push_back(make_leaf({41, 42, 43}));
+    left_children.push_back(make_leaf({61, 62, 63}));
+
+    std::vector<std::unique_ptr<gatidb::Btree::Node>> right_children;
+    right_children.push_back(make_leaf({101, 102, 103}));
+    right_children.push_back(make_leaf({121, 122, 123}));
+    right_children.push_back(make_leaf({141, 142, 143}));
+    right_children.push_back(make_leaf({161, 162, 163}));
+
+    gatidb::Btree tree;
+    tree.root_ = std::make_unique<gatidb::Btree::Node>();
+    tree.root_->is_leaf = false;
+    tree.root_->keys = {100};
+    tree.root_->values = {1000};
+    tree.root_->children.push_back(make_internal({20, 40, 60}, std::move(left_children)));
+    tree.root_->children.push_back(make_internal({120, 140, 160}, std::move(right_children)));
     return tree;
 }
 void test_first_insert_initializes_leaf_root() {
@@ -314,6 +359,44 @@ void test_erase_with_right_merge_preserves_search_ranges() {
     check(tree.root_ && tree.root_->keys == std::vector<int>{1, 2, 3, 4, 5, 6}, test_name,
           "merged root keys should stay sorted");
 }
+void test_root_may_keep_one_key_after_child_merge() {
+    const std::string test_name = "root may keep one key after child merge";
+    auto tree = make_three_leaf_root_tree();
+    tree.erase(4);
+
+    check(!tree.find(4).has_value(), test_name, "erased key should not be found");
+    check(tree.root_ && !tree.root_->is_leaf, test_name, "root should remain internal");
+    check(tree.root_ && tree.root_->keys == std::vector<int>{7}, test_name,
+          "root with one remaining separator is valid");
+    check(tree.find(0) == 0, test_name, "left merged key should remain findable");
+    check(tree.find(3) == 30, test_name, "pulled-down separator should remain findable");
+    check(tree.find(5) == 50, test_name, "middle key should remain findable");
+    check(tree.find(10) == 100, test_name, "right child key should remain findable");
+}
+void test_repair_underflow_treats_nonempty_root_as_valid() {
+    const std::string test_name = "repair underflow treats nonempty root as valid";
+    auto tree = make_two_leaf_tree({0, 1, 2}, 3, {4, 5, 6});
+    tree.repair_underflow(*tree.root_, {});
+
+    check(tree.root_ && tree.root_->keys == std::vector<int>{3}, test_name,
+          "nonempty root should not be repaired through an empty path");
+    check(tree.find(0) == 0, test_name, "left child key should remain findable");
+    check(tree.find(6) == 60, test_name, "right child key should remain findable");
+}
+void test_leaf_merge_repairs_non_root_parent_underflow() {
+    const std::string test_name = "leaf merge repairs non-root parent underflow";
+    auto tree = make_three_level_tree();
+    tree.erase(61);
+
+    check(!tree.find(61).has_value(), test_name, "erased key should not be found");
+    check(tree.find(60) == 600, test_name, "merged separator should remain findable");
+    check(tree.find(62) == 620, test_name, "current leaf key should remain findable");
+    check(tree.find(100) == 1000, test_name, "root separator should remain findable");
+
+    const auto* left_internal = tree.root_->children[0].get();
+    check(left_internal->keys.size() >= gatidb::MIN_KEYS, test_name,
+          "non-root parent should be repaired after losing a separator");
+}
 void test_insert_greater_than_root_separator_after_split() {
     const std::string test_name = "insert greater than root separator after split";
     gatidb::Btree tree;
@@ -368,6 +451,9 @@ int main() {
     test_erase_with_right_borrow_preserves_search_ranges();
     test_erase_with_left_merge_preserves_search_ranges();
     test_erase_with_right_merge_preserves_search_ranges();
+    test_root_may_keep_one_key_after_child_merge();
+    test_repair_underflow_treats_nonempty_root_as_valid();
+    test_leaf_merge_repairs_non_root_parent_underflow();
     test_insert_greater_than_root_separator_after_split();
     test_many_ascending_inserts_split_child_and_keep_all_keys();
     if (failures != 0) {

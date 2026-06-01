@@ -59,115 +59,138 @@ void Btree::erase(int key) {
     if (!cursor.found || !cursor.node->is_leaf) {
         return;
     }
-    // will deletion satisfy the invariant?
     cursor.node->keys.erase(advance_by(cursor.node->keys.begin(), cursor.index));
     cursor.node->values.erase(advance_by(cursor.node->values.begin(), cursor.index));
+
     auto n = cursor.node->keys.size();
-    if ((n <= MAX_KEYS && n >= MIN_KEYS) || !cursor.parent) {
+    if ((n <= MAX_KEYS && n >= MIN_KEYS) || cursor.path.empty()) {
         return;
     } else {
-        auto can_borrow_from_left =
-            cursor.child_index > 0 &&
-            cursor.parent->children[cursor.child_index - 1]->keys.size() > MIN_KEYS;
+        repair_underflow(*cursor.node, cursor.path);
+    }
+}
 
-        auto can_borrow_from_right =
-            cursor.child_index < cursor.parent->children.size() - 1 &&
-            cursor.parent->children[cursor.child_index + 1]->keys.size() > MIN_KEYS;
+void Btree::repair_underflow(Node& node, std::vector<PathEntry<Node>> path) {
+    if (path.size() == 0) {
+        return;
+    }
+    auto parent = path.back().node;
+    auto child_index = path.back().child_index;
+    auto can_borrow_from_left =
+        child_index > 0 && parent->children[child_index - 1]->keys.size() > MIN_KEYS;
 
-        if (can_borrow_from_left) {
-            borrow_leaf_from_left(cursor);
-        } else if (can_borrow_from_right) {
-            borrow_leaf_from_right(cursor);
+    auto can_borrow_from_right = child_index < parent->children.size() - 1 &&
+                                 parent->children[child_index + 1]->keys.size() > MIN_KEYS;
+
+    if (can_borrow_from_left) {
+        borrow_leaf_from_left(node, path);
+    } else if (can_borrow_from_right) {
+        borrow_leaf_from_right(node, path);
+    } else {
+        auto is_left_merge_possible = child_index > 0;
+        if (is_left_merge_possible) {
+            auto separator_key = parent->keys[child_index - 1];
+            auto separator_value = parent->values[child_index - 1];
+            auto left = parent->children[child_index - 1].get();
+            left->keys.push_back(separator_key);
+            left->values.push_back(separator_value);
+            left->keys.insert(left->keys.end(), node.keys.begin(), node.keys.end());
+            left->values.insert(left->values.end(), node.values.begin(), node.values.end());
+
+            if (!left->is_leaf) {
+                std::move(node.children.begin(), node.children.end(),
+                          std::back_inserter(left->children));
+
+                node.children.clear();
+            }
+
+            parent->keys.erase(advance_by(parent->keys.begin(), child_index - 1));
+            parent->values.erase(advance_by(parent->values.begin(), child_index - 1));
+
+            parent->children.erase(advance_by(parent->children.begin(), child_index));
+
         } else {
+            auto separator_key = parent->keys[child_index];
+            auto separator_value = parent->values[child_index];
+            auto right = parent->children[child_index + 1].get();
+            right->keys.insert(right->keys.begin(), separator_key);
+            right->values.insert(right->values.begin(), separator_value);
+            right->keys.insert(right->keys.begin(), node.keys.begin(), node.keys.end());
+            right->values.insert(right->values.begin(), node.values.begin(), node.values.end());
 
-            auto is_left_merge_possible = cursor.child_index > 0;
-            if (is_left_merge_possible) {
-                auto separator_key = cursor.parent->keys[cursor.child_index - 1];
-                auto separator_value = cursor.parent->values[cursor.child_index - 1];
-                auto left = cursor.parent->children[cursor.child_index - 1].get();
-                left->keys.push_back(separator_key);
-                left->values.push_back(separator_value);
-                left->keys.insert(left->keys.end(), cursor.node->keys.begin(),
-                                  cursor.node->keys.end());
-                left->values.insert(left->values.end(), cursor.node->values.begin(),
-                                    cursor.node->values.end());
+            if (!right->is_leaf) {
+                std::move(node.children.begin(), node.children.end(),
+                          std::inserter(right->children, right->children.begin()));
 
-                cursor.parent->keys.erase(
-                    advance_by(cursor.parent->keys.begin(), cursor.child_index - 1));
-                cursor.parent->values.erase(
-                    advance_by(cursor.parent->values.begin(), cursor.child_index - 1));
-
-            } else {
-                auto separator_key = cursor.parent->keys[cursor.child_index];
-                auto separator_value = cursor.parent->values[cursor.child_index];
-                auto right = cursor.parent->children[cursor.child_index + 1].get();
-                right->keys.insert(right->keys.begin(), separator_key);
-                right->values.insert(right->values.begin(), separator_value);
-                right->keys.insert(right->keys.begin(), cursor.node->keys.begin(),
-                                   cursor.node->keys.end());
-                right->values.insert(right->values.begin(), cursor.node->values.begin(),
-                                     cursor.node->values.end());
-
-                cursor.parent->keys.erase(
-                    advance_by(cursor.parent->keys.begin(), cursor.child_index));
-                cursor.parent->values.erase(
-                    advance_by(cursor.parent->values.begin(), cursor.child_index));
+                node.children.clear();
             }
 
-            cursor.parent->children.erase(
-                advance_by(cursor.parent->children.begin(), cursor.child_index));
+            parent->keys.erase(advance_by(parent->keys.begin(), child_index));
+            parent->values.erase(advance_by(parent->values.begin(), child_index));
+            parent->children.erase(advance_by(parent->children.begin(), child_index));
+        }
 
-            if (cursor.parent == root_.get() && root_->keys.empty() &&
-                root_->children.size() == 1) {
-                root_ = std::move(root_->children[0]);
-            }
+        if (parent == root_.get() && root_->keys.empty() && root_->children.size() == 1) {
+            root_ = std::move(root_->children[0]);
+        } else if (parent->keys.size() < MIN_KEYS) {
+            path.pop_back();
+            repair_underflow(*parent, path);
         }
     }
 }
 
-void Btree::borrow_leaf_from_left(const Cursor& cursor) {
-    auto separator_index = cursor.child_index - 1;
-    auto last_index_of_left_sibling =
-        cursor.parent->children[cursor.child_index - 1]->keys.size() - 1;
-    auto sibling_key =
-        cursor.parent->children[cursor.child_index - 1]->keys[last_index_of_left_sibling];
-    auto sibling_value =
-        cursor.parent->children[cursor.child_index - 1]->values[last_index_of_left_sibling];
-    cursor.parent->children[cursor.child_index - 1]->keys.erase(advance_by(
-        cursor.parent->children[cursor.child_index - 1]->keys.begin(), last_index_of_left_sibling));
-    cursor.parent->children[cursor.child_index - 1]->values.erase(
-        advance_by(cursor.parent->children[cursor.child_index - 1]->values.begin(),
-                   last_index_of_left_sibling));
+void Btree::borrow_leaf_from_left(Node& node, const std::vector<PathEntry<Node>>& path) {
+    auto parent = path.back().node;
+    auto child_index = path.back().child_index;
+    auto separator_index = child_index - 1;
+    auto last_index_of_left_sibling = parent->children[child_index - 1]->keys.size() - 1;
+    auto sibling_key = parent->children[child_index - 1]->keys[last_index_of_left_sibling];
+    auto sibling_value = parent->children[child_index - 1]->values[last_index_of_left_sibling];
+    parent->children[child_index - 1]->keys.erase(
+        advance_by(parent->children[child_index - 1]->keys.begin(), last_index_of_left_sibling));
+    parent->children[child_index - 1]->values.erase(
+        advance_by(parent->children[child_index - 1]->values.begin(), last_index_of_left_sibling));
     // get root node key and value at the index
-    auto root_key = cursor.parent->keys[separator_index];
-    auto root_value = cursor.parent->values[separator_index];
+    auto root_key = parent->keys[separator_index];
+    auto root_value = parent->values[separator_index];
     // put the sibling key and value in the root
-    cursor.parent->keys[cursor.child_index - 1] = sibling_key;
-    cursor.parent->values[cursor.child_index - 1] = sibling_value;
-    cursor.node->keys.insert(cursor.node->keys.begin(), root_key);
-    cursor.node->values.insert(cursor.node->values.begin(), root_value);
+    parent->keys[child_index - 1] = sibling_key;
+    parent->values[child_index - 1] = sibling_value;
+    node.keys.insert(node.keys.begin(), root_key);
+    node.values.insert(node.values.begin(), root_value);
+
+    if (!node.is_leaf) {
+        auto& left_children = parent->children[child_index - 1]->children;
+        node.children.insert(node.children.begin(), std::move(left_children.back()));
+        left_children.pop_back();
+    }
 }
 
-void Btree::borrow_leaf_from_right(const Cursor& cursor) {
-    auto separator_index = cursor.child_index;
+void Btree::borrow_leaf_from_right(Node& node, const std::vector<PathEntry<Node>>& path) {
+    auto parent = path.back().node;
+    auto child_index = path.back().child_index;
+    auto separator_index = child_index;
     std::size_t last_index_of_right_sibling = 0;
-    auto sibling_key =
-        cursor.parent->children[cursor.child_index + 1]->keys[last_index_of_right_sibling];
-    auto sibling_value =
-        cursor.parent->children[cursor.child_index + 1]->values[last_index_of_right_sibling];
+    auto sibling_key = parent->children[child_index + 1]->keys[last_index_of_right_sibling];
+    auto sibling_value = parent->children[child_index + 1]->values[last_index_of_right_sibling];
 
-    cursor.parent->children[cursor.child_index + 1]->keys.erase(
-        cursor.parent->children[cursor.child_index + 1]->keys.begin());
-    cursor.parent->children[cursor.child_index + 1]->values.erase(
-        cursor.parent->children[cursor.child_index + 1]->values.begin());
+    parent->children[child_index + 1]->keys.erase(parent->children[child_index + 1]->keys.begin());
+    parent->children[child_index + 1]->values.erase(
+        parent->children[child_index + 1]->values.begin());
     // get root node key and value at the index
-    auto root_key = cursor.parent->keys[separator_index];
-    auto root_value = cursor.parent->values[separator_index];
+    auto root_key = parent->keys[separator_index];
+    auto root_value = parent->values[separator_index];
     // put the sibling key and value in the root
-    cursor.parent->keys[cursor.child_index] = sibling_key;
-    cursor.parent->values[cursor.child_index] = sibling_value;
-    cursor.node->keys.insert(cursor.node->keys.end(), root_key);
-    cursor.node->values.insert(cursor.node->values.end(), root_value);
+    parent->keys[child_index] = sibling_key;
+    parent->values[child_index] = sibling_value;
+    node.keys.insert(node.keys.end(), root_key);
+    node.values.insert(node.values.end(), root_value);
+
+    if (!node.is_leaf) {
+        auto& right_children = parent->children[child_index + 1]->children;
+        node.children.push_back(std::move(right_children.front()));
+        right_children.erase(right_children.begin());
+    }
 }
 Btree::ConstCursor Btree::seek(int key) const {
     return seek_impl<const Node, ConstCursor>(root_.get(), key);
@@ -178,19 +201,18 @@ Btree::Cursor Btree::seek(int key) {
 template <typename NodeType, typename CursorType>
 CursorType Btree::seek_impl(NodeType* root, int key) const {
     NodeType* current = root;
-    NodeType* parent = nullptr;
-    std::size_t child_index = 0;
+    std::vector<PathEntry<NodeType>> path;
     while (current) {
         auto it = std::lower_bound(current->keys.begin(), current->keys.end(), key);
         auto index = static_cast<std::size_t>(it - current->keys.begin());
         if (it != current->keys.end() && current->keys[index] == key) {
-            return CursorType{current, parent, index, child_index, true};
+            return CursorType{current, index, true, path};
         }
         if (current->is_leaf) {
             break;
         }
-        parent = current;
-        child_index = index;
+
+        path.push_back({current, index});
         current = current->children[index].get();
     }
     return CursorType{};
