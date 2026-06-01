@@ -24,6 +24,26 @@ void collect_keys(const gatidb::Btree::Node* node, std::vector<int>& keys) {
         collect_keys(child.get(), keys);
     }
 }
+std::unique_ptr<gatidb::Btree::Node> make_leaf(std::vector<int> keys) {
+    auto node = std::make_unique<gatidb::Btree::Node>();
+    node->is_leaf = true;
+    node->keys = std::move(keys);
+    for (const int key : node->keys) {
+        node->values.push_back(key * 10);
+    }
+    return node;
+}
+gatidb::Btree make_two_leaf_tree(std::vector<int> left_keys, int separator,
+                                 std::vector<int> right_keys) {
+    gatidb::Btree tree;
+    tree.root_ = std::make_unique<gatidb::Btree::Node>();
+    tree.root_->is_leaf = false;
+    tree.root_->keys = {separator};
+    tree.root_->values = {separator * 10};
+    tree.root_->children.push_back(make_leaf(std::move(left_keys)));
+    tree.root_->children.push_back(make_leaf(std::move(right_keys)));
+    return tree;
+}
 void test_first_insert_initializes_leaf_root() {
     const std::string test_name = "first insert initializes leaf root";
     gatidb::Btree tree;
@@ -260,6 +280,40 @@ void test_erase_with_right_borrow_preserves_search_ranges() {
     check(tree.find(7) == 70, test_name, "right child lookup should remain findable");
     check(tree.find(8) == 80, test_name, "rightmost lookup should remain findable");
 }
+void test_erase_with_left_merge_preserves_search_ranges() {
+    const std::string test_name = "erase with left merge preserves search ranges";
+    auto tree = make_two_leaf_tree({0, 1, 2}, 3, {4, 5, 6});
+    tree.erase(4);
+    check(!tree.find(4).has_value(), test_name, "erased key should not be found");
+    check(tree.find(0) == 0, test_name, "left sibling key should remain findable");
+    check(tree.find(1) == 10, test_name, "left sibling key should remain findable");
+    check(tree.find(2) == 20, test_name, "left sibling key should remain findable");
+    check(tree.find(3) == 30, test_name, "pulled-down separator should remain findable");
+    check(tree.find(5) == 50, test_name, "current node key should remain findable");
+    check(tree.find(6) == 60, test_name, "current node key should remain findable");
+    check(!(tree.root_ && !tree.root_->is_leaf && tree.root_->keys.empty()), test_name,
+          "root should not remain an empty internal node after merge");
+    check(tree.root_ && tree.root_->is_leaf, test_name, "merged child should become leaf root");
+    check(tree.root_ && tree.root_->keys == std::vector<int>{0, 1, 2, 3, 5, 6}, test_name,
+          "merged root keys should stay sorted");
+}
+void test_erase_with_right_merge_preserves_search_ranges() {
+    const std::string test_name = "erase with right merge preserves search ranges";
+    auto tree = make_two_leaf_tree({0, 1, 2}, 3, {4, 5, 6});
+    tree.erase(0);
+    check(!tree.find(0).has_value(), test_name, "erased key should not be found");
+    check(tree.find(1) == 10, test_name, "current node key should remain findable");
+    check(tree.find(2) == 20, test_name, "current node key should remain findable");
+    check(tree.find(3) == 30, test_name, "pulled-down separator should remain findable");
+    check(tree.find(4) == 40, test_name, "right sibling key should remain findable");
+    check(tree.find(5) == 50, test_name, "right sibling key should remain findable");
+    check(tree.find(6) == 60, test_name, "right sibling key should remain findable");
+    check(!(tree.root_ && !tree.root_->is_leaf && tree.root_->keys.empty()), test_name,
+          "root should not remain an empty internal node after merge");
+    check(tree.root_ && tree.root_->is_leaf, test_name, "merged child should become leaf root");
+    check(tree.root_ && tree.root_->keys == std::vector<int>{1, 2, 3, 4, 5, 6}, test_name,
+          "merged root keys should stay sorted");
+}
 void test_insert_greater_than_root_separator_after_split() {
     const std::string test_name = "insert greater than root separator after split";
     gatidb::Btree tree;
@@ -312,6 +366,8 @@ int main() {
     test_erase_with_left_borrow_removes_target_and_preserves_order();
     test_erase_with_left_borrow_preserves_search_ranges();
     test_erase_with_right_borrow_preserves_search_ranges();
+    test_erase_with_left_merge_preserves_search_ranges();
+    test_erase_with_right_merge_preserves_search_ranges();
     test_insert_greater_than_root_separator_after_split();
     test_many_ascending_inserts_split_child_and_keep_all_keys();
     if (failures != 0) {

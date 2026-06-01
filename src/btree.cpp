@@ -4,6 +4,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 namespace {
 template <typename Iter> Iter advance_by(Iter it, std::size_t offset) {
@@ -61,7 +62,7 @@ void Btree::erase(int key) {
     // will deletion satisfy the invariant?
     cursor.node->keys.erase(advance_by(cursor.node->keys.begin(), cursor.index));
     cursor.node->values.erase(advance_by(cursor.node->values.begin(), cursor.index));
-    auto n = cursor.node->keys.size() - 1;
+    auto n = cursor.node->keys.size();
     if ((n <= MAX_KEYS && n >= MIN_KEYS) || !cursor.parent) {
         return;
     } else {
@@ -77,12 +78,55 @@ void Btree::erase(int key) {
             borrow_leaf_from_left(cursor);
         } else if (can_borrow_from_right) {
             borrow_leaf_from_right(cursor);
+        } else {
+
+            auto is_left_merge_possible = cursor.child_index > 0;
+            if (is_left_merge_possible) {
+                auto separator_key = cursor.parent->keys[cursor.child_index - 1];
+                auto separator_value = cursor.parent->values[cursor.child_index - 1];
+                auto left = cursor.parent->children[cursor.child_index - 1].get();
+                left->keys.push_back(separator_key);
+                left->values.push_back(separator_value);
+                left->keys.insert(left->keys.end(), cursor.node->keys.begin(),
+                                  cursor.node->keys.end());
+                left->values.insert(left->values.end(), cursor.node->values.begin(),
+                                    cursor.node->values.end());
+
+                cursor.parent->keys.erase(
+                    advance_by(cursor.parent->keys.begin(), cursor.child_index - 1));
+                cursor.parent->values.erase(
+                    advance_by(cursor.parent->values.begin(), cursor.child_index - 1));
+
+            } else {
+                auto separator_key = cursor.parent->keys[cursor.child_index];
+                auto separator_value = cursor.parent->values[cursor.child_index];
+                auto right = cursor.parent->children[cursor.child_index + 1].get();
+                right->keys.insert(right->keys.begin(), separator_key);
+                right->values.insert(right->values.begin(), separator_value);
+                right->keys.insert(right->keys.begin(), cursor.node->keys.begin(),
+                                   cursor.node->keys.end());
+                right->values.insert(right->values.begin(), cursor.node->values.begin(),
+                                     cursor.node->values.end());
+
+                cursor.parent->keys.erase(
+                    advance_by(cursor.parent->keys.begin(), cursor.child_index));
+                cursor.parent->values.erase(
+                    advance_by(cursor.parent->values.begin(), cursor.child_index));
+            }
+
+            cursor.parent->children.erase(
+                advance_by(cursor.parent->children.begin(), cursor.child_index));
+
+            if (cursor.parent == root_.get() && root_->keys.empty() &&
+                root_->children.size() == 1) {
+                root_ = std::move(root_->children[0]);
+            }
         }
     }
 }
 
 void Btree::borrow_leaf_from_left(const Cursor& cursor) {
-    auto seperator_index = cursor.child_index - 1;
+    auto separator_index = cursor.child_index - 1;
     auto last_index_of_left_sibling =
         cursor.parent->children[cursor.child_index - 1]->keys.size() - 1;
     auto sibling_key =
@@ -95,8 +139,8 @@ void Btree::borrow_leaf_from_left(const Cursor& cursor) {
         advance_by(cursor.parent->children[cursor.child_index - 1]->values.begin(),
                    last_index_of_left_sibling));
     // get root node key and value at the index
-    auto root_key = cursor.parent->keys[seperator_index];
-    auto root_value = cursor.parent->values[seperator_index];
+    auto root_key = cursor.parent->keys[separator_index];
+    auto root_value = cursor.parent->values[separator_index];
     // put the sibling key and value in the root
     cursor.parent->keys[cursor.child_index - 1] = sibling_key;
     cursor.parent->values[cursor.child_index - 1] = sibling_value;
@@ -105,7 +149,7 @@ void Btree::borrow_leaf_from_left(const Cursor& cursor) {
 }
 
 void Btree::borrow_leaf_from_right(const Cursor& cursor) {
-    auto seperator_index = cursor.child_index;
+    auto separator_index = cursor.child_index;
     std::size_t last_index_of_right_sibling = 0;
     auto sibling_key =
         cursor.parent->children[cursor.child_index + 1]->keys[last_index_of_right_sibling];
@@ -117,8 +161,8 @@ void Btree::borrow_leaf_from_right(const Cursor& cursor) {
     cursor.parent->children[cursor.child_index + 1]->values.erase(
         cursor.parent->children[cursor.child_index + 1]->values.begin());
     // get root node key and value at the index
-    auto root_key = cursor.parent->keys[seperator_index];
-    auto root_value = cursor.parent->values[seperator_index];
+    auto root_key = cursor.parent->keys[separator_index];
+    auto root_value = cursor.parent->values[separator_index];
     // put the sibling key and value in the root
     cursor.parent->keys[cursor.child_index] = sibling_key;
     cursor.parent->values[cursor.child_index] = sibling_value;
