@@ -71,7 +71,7 @@ void Btree::erase(int key) {
 }
 
 void Btree::repair_underflow(Node& node, std::vector<PathEntry<Node>> path) {
-    if (path.size() == 0) {
+    if (path.empty()) {
         return;
     }
     auto parent = path.back().node;
