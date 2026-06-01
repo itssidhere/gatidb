@@ -62,7 +62,7 @@ void Btree::erase(int key) {
     cursor.node->keys.erase(advance_by(cursor.node->keys.begin(), cursor.index));
     cursor.node->values.erase(advance_by(cursor.node->values.begin(), cursor.index));
     auto n = cursor.node->keys.size() - 1;
-    if (n <= MAX_KEYS && n >= MIN_KEYS) {
+    if ((n <= MAX_KEYS && n >= MIN_KEYS) || !cursor.parent) {
         return;
     } else {
         // can i use my siblings?
@@ -90,6 +90,28 @@ void Btree::erase(int key) {
             cursor.parent->values[cursor.child_index - 1] = sibling_value;
             cursor.node->keys.insert(cursor.node->keys.begin(), root_key);
             cursor.node->values.insert(cursor.node->values.begin(), root_value);
+
+        } else if (cursor.child_index < cursor.parent->children.size() - 1 &&
+                   cursor.parent->children[cursor.child_index + 1]->keys.size() > MIN_KEYS) {
+            // i can borrow one node from right child
+            std::size_t last_index_of_right_sibling = 0;
+            auto sibling_key =
+                cursor.parent->children[cursor.child_index + 1]->keys[last_index_of_right_sibling];
+            auto sibling_value = cursor.parent->children[cursor.child_index + 1]
+                                     ->values[last_index_of_right_sibling];
+
+            cursor.parent->children[cursor.child_index + 1]->keys.erase(
+                cursor.parent->children[cursor.child_index + 1]->keys.begin());
+            cursor.parent->children[cursor.child_index + 1]->values.erase(
+                cursor.parent->children[cursor.child_index + 1]->values.begin());
+            // get root node key and value at the index
+            auto root_key = cursor.parent->keys[cursor.child_index];
+            auto root_value = cursor.parent->values[cursor.child_index];
+            // put the sibling key and value in the root
+            cursor.parent->keys[cursor.child_index] = sibling_key;
+            cursor.parent->values[cursor.child_index] = sibling_value;
+            cursor.node->keys.insert(cursor.node->keys.end(), root_key);
+            cursor.node->values.insert(cursor.node->values.end(), root_value);
         }
     }
 }

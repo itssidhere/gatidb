@@ -241,6 +241,25 @@ void test_erase_with_left_borrow_preserves_search_ranges() {
     check(tree.find(6) == 60, test_name, "right child lookup should remain findable");
     check(tree.find(7) == 70, test_name, "right child lookup should remain findable");
 }
+void test_erase_with_right_borrow_preserves_search_ranges() {
+    const std::string test_name = "erase with right borrow preserves search ranges";
+    gatidb::Btree tree;
+    for (int key = 0; key <= static_cast<int>(gatidb::MAX_KEYS); ++key) {
+        tree.insert(key, key * 10);
+    }
+    tree.insert(8, 80);
+    tree.erase(0);
+    tree.erase(1);
+    check(!tree.find(0).has_value(), test_name, "first erased key should not be found");
+    check(!tree.find(1).has_value(), test_name, "second erased key should not be found");
+    check(tree.find(2) == 20, test_name, "left child lookup should remain findable");
+    check(tree.find(3) == 30, test_name, "borrow should preserve separator lookup");
+    check(tree.find(4) == 40, test_name, "borrowed key should remain findable");
+    check(tree.find(5) == 50, test_name, "right child lookup should remain findable");
+    check(tree.find(6) == 60, test_name, "right child lookup should remain findable");
+    check(tree.find(7) == 70, test_name, "right child lookup should remain findable");
+    check(tree.find(8) == 80, test_name, "rightmost lookup should remain findable");
+}
 void test_insert_greater_than_root_separator_after_split() {
     const std::string test_name = "insert greater than root separator after split";
     gatidb::Btree tree;
@@ -292,6 +311,7 @@ int main() {
     test_erase_removes_key_from_leaf_root();
     test_erase_with_left_borrow_removes_target_and_preserves_order();
     test_erase_with_left_borrow_preserves_search_ranges();
+    test_erase_with_right_borrow_preserves_search_ranges();
     test_insert_greater_than_root_separator_after_split();
     test_many_ascending_inserts_split_child_and_keep_all_keys();
     if (failures != 0) {
