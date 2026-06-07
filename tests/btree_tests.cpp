@@ -92,6 +92,52 @@ gatidb::Btree make_three_level_tree() {
     tree.root_->children.push_back(make_internal({120, 140, 160}, std::move(right_children)));
     return tree;
 }
+gatidb::Btree make_left_heavy_three_level_tree() {
+    std::vector<std::unique_ptr<gatidb::Btree::Node>> left_children;
+    left_children.push_back(make_leaf({1, 2, 3}));
+    left_children.push_back(make_leaf({21, 22, 23}));
+    left_children.push_back(make_leaf({41, 42, 43}));
+    left_children.push_back(make_leaf({61, 62, 63}));
+    left_children.push_back(make_leaf({81, 82, 83}));
+
+    std::vector<std::unique_ptr<gatidb::Btree::Node>> right_children;
+    right_children.push_back(make_leaf({101, 102, 103}));
+    right_children.push_back(make_leaf({121, 122, 123}));
+    right_children.push_back(make_leaf({141, 142, 143}));
+    right_children.push_back(make_leaf({161, 162, 163}));
+
+    gatidb::Btree tree;
+    tree.root_ = std::make_unique<gatidb::Btree::Node>();
+    tree.root_->is_leaf = false;
+    tree.root_->keys = {100};
+    tree.root_->values = {1000};
+    tree.root_->children.push_back(make_internal({20, 40, 60, 80}, std::move(left_children)));
+    tree.root_->children.push_back(make_internal({120, 140, 160}, std::move(right_children)));
+    return tree;
+}
+gatidb::Btree make_right_heavy_three_level_tree() {
+    std::vector<std::unique_ptr<gatidb::Btree::Node>> left_children;
+    left_children.push_back(make_leaf({1, 2, 3}));
+    left_children.push_back(make_leaf({21, 22, 23}));
+    left_children.push_back(make_leaf({41, 42, 43}));
+    left_children.push_back(make_leaf({61, 62, 63}));
+
+    std::vector<std::unique_ptr<gatidb::Btree::Node>> right_children;
+    right_children.push_back(make_leaf({101, 102, 103}));
+    right_children.push_back(make_leaf({121, 122, 123}));
+    right_children.push_back(make_leaf({141, 142, 143}));
+    right_children.push_back(make_leaf({161, 162, 163}));
+    right_children.push_back(make_leaf({181, 182, 183}));
+
+    gatidb::Btree tree;
+    tree.root_ = std::make_unique<gatidb::Btree::Node>();
+    tree.root_->is_leaf = false;
+    tree.root_->keys = {100};
+    tree.root_->values = {1000};
+    tree.root_->children.push_back(make_internal({20, 40, 60}, std::move(left_children)));
+    tree.root_->children.push_back(make_internal({120, 140, 160, 180}, std::move(right_children)));
+    return tree;
+}
 void test_first_insert_initializes_leaf_root() {
     const std::string test_name = "first insert initializes leaf root";
     gatidb::Btree tree;
@@ -253,6 +299,27 @@ void test_erase_removes_key_from_leaf_root() {
     check(tree.find(30) == 300, test_name, "other keys should remain findable");
     check_valid_tree(tree, test_name);
 }
+void test_erase_removes_key_from_internal_root() {
+    const std::string test_name = "erase removes key from internal root";
+    gatidb::Btree tree;
+    for (std::size_t i = 0; i <= gatidb::MAX_KEYS; ++i) {
+        tree.insert(static_cast<int>(i), static_cast<int>(i * 10));
+    }
+
+    const int internal_key = tree.root_->keys[0];
+    tree.erase(internal_key);
+
+    check(!tree.find(internal_key).has_value(), test_name,
+          "erased internal key should not be found");
+    for (std::size_t i = 0; i <= gatidb::MAX_KEYS; ++i) {
+        const auto key = static_cast<int>(i);
+        if (key == internal_key) {
+            continue;
+        }
+        check(tree.find(key) == key * 10, test_name, "other keys should remain findable");
+    }
+    check_valid_tree(tree, test_name);
+}
 void test_erase_with_left_borrow_removes_target_and_preserves_order() {
     const std::string test_name = "erase with left borrow removes target and preserves order";
     gatidb::Btree tree;
@@ -365,6 +432,20 @@ void test_repair_underflow_treats_nonempty_root_as_valid() {
     check(tree.find(6) == 60, test_name, "right child key should remain findable");
     check_valid_tree(tree, test_name);
 }
+void test_valid_rejects_bad_leaf_root_ordering() {
+    const std::string test_name = "valid rejects bad leaf root ordering";
+    gatidb::Btree tree;
+    tree.root_ = make_leaf({2, 1, 3});
+
+    check(!tree.is_valid(), test_name, "leaf root keys must still be sorted");
+}
+void test_valid_rejects_duplicate_leaf_root_key() {
+    const std::string test_name = "valid rejects duplicate leaf root key";
+    gatidb::Btree tree;
+    tree.root_ = make_leaf({1, 1, 2});
+
+    check(!tree.is_valid(), test_name, "leaf root keys must still be unique");
+}
 void test_leaf_merge_repairs_non_root_parent_underflow() {
     const std::string test_name = "leaf merge repairs non-root parent underflow";
     auto tree = make_three_level_tree();
@@ -375,6 +456,40 @@ void test_leaf_merge_repairs_non_root_parent_underflow() {
     check(tree.find(62) == 620, test_name, "current leaf key should remain findable");
     check(tree.find(100) == 1000, test_name, "root separator should remain findable");
 
+    check_valid_tree(tree, test_name);
+}
+void test_erase_internal_root_with_internal_children_preserves_search_ranges() {
+    const std::string test_name =
+        "erase internal root with internal children preserves search ranges";
+    auto tree = make_three_level_tree();
+
+    tree.erase(100);
+
+    check(!tree.find(100).has_value(), test_name, "erased root key should not be found");
+    check(tree.find(101) == 1010, test_name, "right subtree should remain searchable");
+    check(tree.find(120) == 1200, test_name, "right internal separator should remain searchable");
+    check_valid_tree(tree, test_name);
+}
+void test_erase_internal_root_uses_leaf_predecessor_from_internal_child() {
+    const std::string test_name = "erase internal root uses leaf predecessor from internal child";
+    auto tree = make_left_heavy_three_level_tree();
+
+    tree.erase(100);
+
+    check(!tree.find(100).has_value(), test_name, "erased root key should not be found");
+    check(tree.find(81) == 810, test_name, "predecessor branch should preserve last child range");
+    check(tree.find(83) == 830, test_name, "leaf predecessor should remain searchable");
+    check_valid_tree(tree, test_name);
+}
+void test_erase_internal_root_uses_leaf_successor_from_internal_child() {
+    const std::string test_name = "erase internal root uses leaf successor from internal child";
+    auto tree = make_right_heavy_three_level_tree();
+
+    tree.erase(100);
+
+    check(!tree.find(100).has_value(), test_name, "erased root key should not be found");
+    check(tree.find(101) == 1010, test_name, "successor branch should preserve first child range");
+    check(tree.find(103) == 1030, test_name, "leaf successor should remain searchable");
     check_valid_tree(tree, test_name);
 }
 void test_insert_greater_than_root_separator_after_split() {
@@ -424,6 +539,7 @@ int main() {
     test_duplicate_key_updates_value_in_leaf_after_root_split();
     test_find_returns_values_and_missing_sentinel();
     test_erase_removes_key_from_leaf_root();
+    test_erase_removes_key_from_internal_root();
     test_erase_with_left_borrow_removes_target_and_preserves_order();
     test_erase_with_left_borrow_preserves_search_ranges();
     test_erase_with_right_borrow_preserves_search_ranges();
@@ -431,7 +547,12 @@ int main() {
     test_erase_with_right_merge_preserves_search_ranges();
     test_root_may_keep_one_key_after_child_merge();
     test_repair_underflow_treats_nonempty_root_as_valid();
+    test_valid_rejects_bad_leaf_root_ordering();
+    test_valid_rejects_duplicate_leaf_root_key();
     test_leaf_merge_repairs_non_root_parent_underflow();
+    test_erase_internal_root_with_internal_children_preserves_search_ranges();
+    test_erase_internal_root_uses_leaf_predecessor_from_internal_child();
+    test_erase_internal_root_uses_leaf_successor_from_internal_child();
     test_insert_greater_than_root_separator_after_split();
     test_many_ascending_inserts_split_child_and_keep_all_keys();
     if (failures != 0) {

@@ -43,9 +43,13 @@ class Btree {
     void update_value_at_node(Node* parent, std::size_t index, int value);
     void borrow_leaf_from_left(Node& node, const std::vector<PathEntry<Node>>& path);
     void borrow_leaf_from_right(Node& node, const std::vector<PathEntry<Node>>& path);
+    Node& merge_children(Node& parent, std::size_t separator_index);
     void repair_underflow(Node& node, std::vector<PathEntry<Node>> path);
     bool is_valid_node(const Node* node, const std::optional<int> min_allowed,
                        const std::optional<int> max_allowed, std::size_t depth,
                        std::optional<std::size_t>& leaf_depth) const;
+    void erase_at(Cursor cursor, int key);
+    Cursor find_next_predecessor(Cursor cursor);
+    Cursor find_next_successor(Cursor cursor);
 };
 } // namespace gatidb
