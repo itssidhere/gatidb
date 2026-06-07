@@ -1,5 +1,6 @@
 #include "gatidb/btree.hpp"
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <iterator>
 #include <memory>
@@ -76,12 +77,17 @@ void Btree::erase_at(Cursor cursor, int key) {
             cursor.node->values[cursor.index] = sucessor.node->values[sucessor.index];
             erase_at(sucessor, key);
         } else {
-            auto& node = merge_children(*cursor.node, cursor.index);
-            if (cursor.node == root_.get() && root_->keys.empty() && root_->children.size() == 1) {
-                root_ = std::move(root_->children[0]);
+            merge_children(*cursor.node, cursor.index);
+            if (cursor.node == root_.get()) {
+                if (root_->keys.empty()) {
+                    assert(root_->children.size() == 1);
+                    root_ = std::move(root_->children[0]);
+                }
+            } else if (cursor.node->keys.size() < MIN_KEYS) {
+                repair_underflow(*cursor.node, cursor.path);
             }
 
-            auto new_cursor = seek_impl<Node, Cursor>(&node, key);
+            auto new_cursor = seek(key);
             erase_at(new_cursor, key);
         }
         return;
@@ -89,6 +95,10 @@ void Btree::erase_at(Cursor cursor, int key) {
     cursor.node->keys.erase(advance_by(cursor.node->keys.begin(), cursor.index));
     cursor.node->values.erase(advance_by(cursor.node->values.begin(), cursor.index));
 
+    if (cursor.node == root_.get() && root_->keys.empty()) {
+        root_ = nullptr;
+        return;
+    }
     auto n = cursor.node->keys.size();
     if ((n <= MAX_KEYS && n >= MIN_KEYS) || cursor.path.empty()) {
         return;

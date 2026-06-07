@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <iostream>
 #include <memory>
+#include <numeric>
+#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -27,6 +29,49 @@ void collect_keys(const gatidb::Btree::Node* node, std::vector<int>& keys) {
     for (const auto& child : node->children) {
         collect_keys(child.get(), keys);
     }
+}
+bool fail_now(const std::string& test_name, const std::string& message) {
+    ++failures;
+    std::cerr << "FAIL " << test_name << ": " << message << '\n';
+    return false;
+}
+bool check_tree_matches_keys(const gatidb::Btree& tree, const std::vector<bool>& present,
+                             const std::string& test_name, const std::string& context) {
+    if (!tree.is_valid()) {
+        return fail_now(test_name, context + ": tree invariants should hold");
+    }
+
+    std::vector<int> actual_keys;
+    collect_keys(tree.root_.get(), actual_keys);
+    std::sort(actual_keys.begin(), actual_keys.end());
+
+    std::vector<int> expected_keys;
+    for (std::size_t key = 0; key < present.size(); ++key) {
+        if (present[key]) {
+            expected_keys.push_back(static_cast<int>(key));
+        }
+    }
+
+    if (actual_keys != expected_keys) {
+        return fail_now(test_name, context + ": collected keys should match expected keys");
+    }
+
+    for (std::size_t key = 0; key < present.size(); ++key) {
+        const auto found = tree.find(static_cast<int>(key));
+        if (present[key] && found != static_cast<int>(key * 10)) {
+            return fail_now(test_name, context + ": present key should be findable");
+        }
+        if (!present[key] && found.has_value()) {
+            return fail_now(test_name, context + ": erased key should not be findable");
+        }
+    }
+
+    return true;
+}
+std::vector<int> make_key_range(int count) {
+    std::vector<int> keys(static_cast<std::size_t>(count));
+    std::iota(keys.begin(), keys.end(), 0);
+    return keys;
 }
 std::unique_ptr<gatidb::Btree::Node> make_leaf(std::vector<int> keys) {
     auto node = std::make_unique<gatidb::Btree::Node>();
@@ -526,6 +571,96 @@ void test_many_ascending_inserts_split_child_and_keep_all_keys() {
     check(keys == expected, test_name, "all keys 0 through 19 should remain in the tree");
     check_valid_tree(tree, test_name);
 }
+void test_hammer_ascending_insert_random_erase_until_one_key() {
+    const std::string test_name = "hammer ascending insert random erase until one key";
+    constexpr int key_count = 96;
+    auto keys = make_key_range(key_count);
+    gatidb::Btree tree;
+    std::vector<bool> present(static_cast<std::size_t>(key_count), false);
+
+    for (const int key : keys) {
+        tree.insert(key, key * 10);
+        present[static_cast<std::size_t>(key)] = true;
+    }
+
+    if (!check_tree_matches_keys(tree, present, test_name, "after inserts")) {
+        return;
+    }
+
+    std::mt19937 rng(0xC0FFEE);
+    auto erase_order = keys;
+    std::shuffle(erase_order.begin(), erase_order.end(), rng);
+    erase_order.pop_back();
+
+    for (std::size_t step = 0; step < erase_order.size(); ++step) {
+        const int key = erase_order[step];
+        tree.erase(key);
+        present[static_cast<std::size_t>(key)] = false;
+        if (!check_tree_matches_keys(tree, present, test_name,
+                                     "after erase #" + std::to_string(step + 1) + " key " +
+                                         std::to_string(key))) {
+            return;
+        }
+    }
+}
+void test_hammer_random_insert_random_erase_until_one_key() {
+    const std::string test_name = "hammer random insert random erase until one key";
+    constexpr int key_count = 96;
+    auto insert_order = make_key_range(key_count);
+    auto erase_order = insert_order;
+    std::mt19937 insert_rng(0x51DDBA5E);
+    std::mt19937 erase_rng(0xBADC0DE);
+    std::shuffle(insert_order.begin(), insert_order.end(), insert_rng);
+    std::shuffle(erase_order.begin(), erase_order.end(), erase_rng);
+
+    gatidb::Btree tree;
+    std::vector<bool> present(static_cast<std::size_t>(key_count), false);
+    for (const int key : insert_order) {
+        tree.insert(key, key * 10);
+        present[static_cast<std::size_t>(key)] = true;
+    }
+
+    if (!check_tree_matches_keys(tree, present, test_name, "after inserts")) {
+        return;
+    }
+
+    erase_order.pop_back();
+    for (std::size_t step = 0; step < erase_order.size(); ++step) {
+        const int key = erase_order[step];
+        tree.erase(key);
+        present[static_cast<std::size_t>(key)] = false;
+        if (!check_tree_matches_keys(tree, present, test_name,
+                                     "after erase #" + std::to_string(step + 1) + " key " +
+                                         std::to_string(key))) {
+            return;
+        }
+    }
+}
+void test_hammer_erase_all_keys_leaves_valid_empty_tree() {
+    const std::string test_name = "hammer erase all keys leaves valid empty tree";
+    constexpr int key_count = 24;
+    auto keys = make_key_range(key_count);
+    gatidb::Btree tree;
+    std::vector<bool> present(static_cast<std::size_t>(key_count), false);
+
+    for (const int key : keys) {
+        tree.insert(key, key * 10);
+        present[static_cast<std::size_t>(key)] = true;
+    }
+
+    std::mt19937 rng(0xDE1E7E);
+    std::shuffle(keys.begin(), keys.end(), rng);
+    for (std::size_t step = 0; step < keys.size(); ++step) {
+        const int key = keys[step];
+        tree.erase(key);
+        present[static_cast<std::size_t>(key)] = false;
+        if (!check_tree_matches_keys(tree, present, test_name,
+                                     "after erase #" + std::to_string(step + 1) + " key " +
+                                         std::to_string(key))) {
+            return;
+        }
+    }
+}
 } // namespace
 int main() {
     test_first_insert_initializes_leaf_root();
@@ -555,6 +690,9 @@ int main() {
     test_erase_internal_root_uses_leaf_successor_from_internal_child();
     test_insert_greater_than_root_separator_after_split();
     test_many_ascending_inserts_split_child_and_keep_all_keys();
+    test_hammer_ascending_insert_random_erase_until_one_key();
+    test_hammer_random_insert_random_erase_until_one_key();
+    test_hammer_erase_all_keys_leaves_valid_empty_tree();
     if (failures != 0) {
         std::cerr << failures << " test assertion(s) failed\n";
         return 1;
