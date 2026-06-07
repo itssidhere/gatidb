@@ -11,6 +11,7 @@ class Btree {
     void insert(int key, int value);
     std::optional<int> find(int key) const;
     void erase(int key);
+    bool is_valid() const;
 
   private:
     struct Node {
@@ -43,5 +44,8 @@ class Btree {
     void borrow_leaf_from_left(Node& node, const std::vector<PathEntry<Node>>& path);
     void borrow_leaf_from_right(Node& node, const std::vector<PathEntry<Node>>& path);
     void repair_underflow(Node& node, std::vector<PathEntry<Node>> path);
+    bool is_valid_node(const Node* node, const std::optional<int> min_allowed,
+                       const std::optional<int> max_allowed, std::size_t depth,
+                       std::optional<std::size_t>& leaf_depth) const;
 };
 } // namespace gatidb

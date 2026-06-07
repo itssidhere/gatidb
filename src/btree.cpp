@@ -293,4 +293,119 @@ void Btree::split_child(Node* parent, std::size_t child_index) {
 void Btree::update_value_at_node(Node* node, std::size_t index, int value) {
     node->values[index] = value;
 }
+bool Btree::is_valid() const {
+    if (root_ == nullptr) {
+        return true;
+    }
+
+    if (root_->keys.size() != root_->values.size()) {
+        return false;
+    }
+
+    if (root_->keys.size() > MAX_KEYS) {
+        return false;
+    }
+
+    if (root_->is_leaf) {
+        return root_->children.empty();
+    }
+
+    if (root_->keys.empty()) {
+        return false;
+    }
+
+    if (root_->children.size() != root_->keys.size() + 1) {
+        return false;
+    }
+
+    if (!std::is_sorted(root_->keys.begin(), root_->keys.end())) {
+        return false;
+    }
+
+    if (std::adjacent_find(root_->keys.begin(), root_->keys.end()) != root_->keys.end()) {
+        return false;
+    }
+
+    std::optional<std::size_t> leaf_depth;
+    for (std::size_t i = 0; i < root_->children.size(); i++) {
+        std::optional<int> min_allowed = std::nullopt;
+        std::optional<int> max_allowed = std::nullopt;
+        if (i > 0) {
+            min_allowed = root_->keys[i - 1];
+        }
+        if (i < root_->keys.size()) {
+            max_allowed = root_->keys[i];
+        }
+        if (root_->children[i] == nullptr ||
+            !is_valid_node(root_->children[i].get(), min_allowed, max_allowed, 1, leaf_depth)) {
+            return false;
+        }
+    }
+    return true;
+}
+bool Btree::is_valid_node(const Node* node, const std::optional<int> min_allowed,
+                          const std::optional<int> max_allowed, std::size_t depth,
+                          std::optional<std::size_t>& leaf_depth) const {
+    if (node->keys.size() != node->values.size()) {
+        return false;
+    }
+
+    if (node->keys.size() < MIN_KEYS) {
+        return false;
+    }
+
+    if (node->keys.size() > MAX_KEYS) {
+        return false;
+    }
+
+    if (!std::is_sorted(node->keys.begin(), node->keys.end())) {
+        return false;
+    }
+
+    if (std::adjacent_find(node->keys.begin(), node->keys.end()) != node->keys.end()) {
+        return false;
+    }
+
+    for (const auto key : node->keys) {
+        if (min_allowed.has_value() && key <= min_allowed.value()) {
+            return false;
+        }
+        if (max_allowed.has_value() && key >= max_allowed.value()) {
+            return false;
+        }
+    }
+
+    if (node->is_leaf) {
+        if (!node->children.empty()) {
+            return false;
+        }
+        if (!leaf_depth.has_value()) {
+            leaf_depth = depth;
+            return true;
+        }
+        return depth == leaf_depth.value();
+    }
+
+    if (node->keys.size() + 1 != node->children.size()) {
+        return false;
+    }
+
+    for (std::size_t i = 0; i < node->children.size(); i++) {
+        auto child_min_allowed = min_allowed;
+        auto child_max_allowed = max_allowed;
+        if (i > 0) {
+            child_min_allowed = node->keys[i - 1];
+        }
+        if (i < node->keys.size()) {
+            child_max_allowed = node->keys[i];
+        }
+        if (node->children[i] == nullptr ||
+            !is_valid_node(node->children[i].get(), child_min_allowed, child_max_allowed, depth + 1,
+                           leaf_depth)) {
+            return false;
+        }
+    }
+
+    return true;
+}
 } // namespace gatidb
